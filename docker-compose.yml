@@ -5,6 +5,8 @@ services:
       - "8473:8473"
     env_file:
       - .env.local
+    environment:
+      NOTES_DATA_DIR: /app/data/notes
     restart: unless-stopped
     volumes:
       - notes-data:/app/data

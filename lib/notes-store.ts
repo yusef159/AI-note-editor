@@ -60,7 +60,7 @@ export async function listNoteSummaries(): Promise<NoteSummary[]> {
   const notes: NoteSummary[] = [];
 
   for (const file of files) {
-    if (!file.endsWith(".json")) continue;
+    if (!file.endsWith(".json") || file.endsWith(".tmp")) continue;
     try {
       const raw = await fs.readFile(path.join(NOTES_DIR, file), "utf-8");
       const note = JSON.parse(raw) as ServerNote;

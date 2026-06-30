@@ -28,6 +28,7 @@ export default function EditorPage({ noteId }: EditorPageProps) {
   const [html, setHtml] = useState("");
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [enhanceStatus, setEnhanceStatus] = useState<
     "idle" | "enhancing" | "error"
   >("idle");
@@ -47,22 +48,29 @@ export default function EditorPage({ noteId }: EditorPageProps) {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const [all, current] = await Promise.all([
-        listNotes(),
-        getNote(noteId),
-      ]);
-      setNotes(all);
+      setLoadError(null);
 
-      if (!current) {
-        router.replace("/");
-        return;
+      try {
+        const all = await listNotes();
+        setNotes(all);
+
+        const current = await getNote(noteId);
+        if (!current) {
+          router.replace("/");
+          return;
+        }
+
+        const content = await loadNoteHtml(current);
+        setNote(current);
+        setTitle(current.title);
+        setHtml(content);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to connect to server";
+        setLoadError(message);
+      } finally {
+        setLoading(false);
       }
-
-      const content = await loadNoteHtml(current);
-      setNote(current);
-      setTitle(current.title);
-      setHtml(content);
-      setLoading(false);
     }
     load();
   }, [noteId, router]);
@@ -126,6 +134,26 @@ export default function EditorPage({ noteId }: EditorPageProps) {
     return (
       <div className="flex h-screen items-center justify-center text-zinc-400">
         Loading note…
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-screen items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-4">
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+            Could not load notes
+          </h1>
+          <p className="text-sm text-zinc-500">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => router.replace("/")}
+            className="rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium py-2 px-4 transition-colors"
+          >
+            Go to home
+          </button>
+        </div>
       </div>
     );
   }

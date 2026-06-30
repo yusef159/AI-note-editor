@@ -8,9 +8,10 @@ export async function GET() {
     const notes = await listNoteSummaries();
     return NextResponse.json(notes);
   } catch (err) {
-    console.error("Failed to list notes:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to list notes:", message, err);
     return NextResponse.json(
-      { error: "Failed to list notes" },
+      { error: "Failed to list notes", detail: message },
       { status: 500 }
     );
   }
@@ -26,9 +27,10 @@ export async function POST(request: NextRequest) {
     const note = await createNote(title);
     return NextResponse.json(note, { status: 201 });
   } catch (err) {
-    console.error("Failed to create note:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to create note:", message, err);
     return NextResponse.json(
-      { error: "Failed to create note" },
+      { error: "Failed to create note", detail: message },
       { status: 500 }
     );
   }
