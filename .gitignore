@@ -34,6 +34,9 @@ yarn-error.log*
 .env*
 !.env*.example
 
+# server-side note storage
+/data/
+
 # vercel
 .vercel
 

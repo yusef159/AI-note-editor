@@ -17,7 +17,6 @@
     "@tiptap/pm": "^3.27.1",
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
-    "dexie": "^4.4.4",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "next": "16.2.9",

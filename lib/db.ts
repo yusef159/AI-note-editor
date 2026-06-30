@@ -1,21 +1,101 @@
-import Dexie, { type Table } from "dexie";
 import type { Note, StoredNoteContent } from "./types";
 import { generateId } from "./uuid";
 
 const IMAGE_ID_ATTR = "data-image-id";
 
-class NotesDatabase extends Dexie {
-  notes!: Table<Note>;
-
-  constructor() {
-    super("LectureNotesDB");
-    this.version(1).stores({
-      notes: "id, updatedAt, createdAt",
-    });
-  }
+interface WireImage {
+  mimeType: string;
+  data: string;
 }
 
-export const db = new NotesDatabase();
+interface WireNote {
+  id: string;
+  title: string;
+  content: {
+    html: string;
+    images: Record<string, WireImage>;
+  };
+  updatedAt: number;
+  createdAt: number;
+}
+
+interface NoteSummary {
+  id: string;
+  title: string;
+  updatedAt: number;
+  createdAt: number;
+}
+
+async function apiFetch(
+  input: RequestInfo,
+  init?: RequestInit
+): Promise<Response> {
+  const res = await fetch(input, init);
+  if (!res.ok) {
+    const message = await res
+      .json()
+      .then((data: { error?: string }) => data.error)
+      .catch(() => res.statusText);
+    throw new Error(message || "Request failed");
+  }
+  return res;
+}
+
+function base64ToBlob(data: string, mimeType: string): Blob {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function blobToBase64(blob: Blob): Promise<WireImage> {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return {
+    mimeType: blob.type || "application/octet-stream",
+    data: btoa(binary),
+  };
+}
+
+function wireToNote(wire: WireNote): Note {
+  const images: Record<string, Blob> = {};
+  for (const [id, image] of Object.entries(wire.content.images)) {
+    images[id] = base64ToBlob(image.data, image.mimeType);
+  }
+  return {
+    id: wire.id,
+    title: wire.title,
+    content: { html: wire.content.html, images },
+    updatedAt: wire.updatedAt,
+    createdAt: wire.createdAt,
+  };
+}
+
+async function contentToWire(
+  content: StoredNoteContent
+): Promise<WireNote["content"]> {
+  const images: Record<string, WireImage> = {};
+  for (const [id, blob] of Object.entries(content.images)) {
+    images[id] = await blobToBase64(blob);
+  }
+  return { html: content.html, images };
+}
+
+function summaryToNote(summary: NoteSummary): Note {
+  return {
+    id: summary.id,
+    title: summary.title,
+    content: { html: "", images: {} },
+    updatedAt: summary.updatedAt,
+    createdAt: summary.createdAt,
+  };
+}
 
 async function blobUrlToBlob(url: string): Promise<Blob> {
   const res = await fetch(url);
@@ -68,24 +148,29 @@ export async function deserializeNoteContent(
 }
 
 export async function listNotes(): Promise<Note[]> {
-  return db.notes.orderBy("updatedAt").reverse().toArray();
+  const res = await apiFetch("/api/notes");
+  const summaries = (await res.json()) as NoteSummary[];
+  return summaries.map(summaryToNote);
 }
 
 export async function getNote(id: string): Promise<Note | undefined> {
-  return db.notes.get(id);
+  try {
+    const res = await apiFetch(`/api/notes/${id}`);
+    const wire = (await res.json()) as WireNote;
+    return wireToNote(wire);
+  } catch {
+    return undefined;
+  }
 }
 
 export async function createNote(title = "Untitled note"): Promise<Note> {
-  const now = Date.now();
-  const note: Note = {
-    id: generateId(),
-    title,
-    content: { html: "<p></p>", images: {} },
-    updatedAt: now,
-    createdAt: now,
-  };
-  await db.notes.add(note);
-  return note;
+  const res = await apiFetch("/api/notes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  const wire = (await res.json()) as WireNote;
+  return wireToNote(wire);
 }
 
 export async function saveNote(
@@ -93,7 +178,7 @@ export async function saveNote(
   title: string,
   html: string
 ): Promise<void> {
-  const existing = await db.notes.get(id);
+  const existing = await getNote(id);
   if (!existing) return;
 
   const newContent = await serializeNoteContent(
@@ -118,10 +203,15 @@ export async function saveNote(
     if (usedIds.has(key)) prunedImages[key] = blob;
   }
 
-  await db.notes.update(id, {
-    title,
-    content: { html: newContent.html, images: prunedImages },
-    updatedAt: Date.now(),
+  const content = await contentToWire({
+    html: newContent.html,
+    images: prunedImages,
+  });
+
+  await apiFetch(`/api/notes/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, content }),
   });
 }
 
@@ -130,9 +220,13 @@ export async function loadNoteHtml(note: Note): Promise<string> {
 }
 
 export async function updateNoteTitle(id: string, title: string): Promise<void> {
-  await db.notes.update(id, { title, updatedAt: Date.now() });
+  await apiFetch(`/api/notes/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
 }
 
 export async function deleteNote(id: string): Promise<void> {
-  await db.notes.delete(id);
+  await apiFetch(`/api/notes/${id}`, { method: "DELETE" });
 }
