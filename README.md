@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lecture Notes
 
-## Getting Started
+A web app for students to build lecture notes from recorded classes. Paste screenshots from lecture recordings and they are automatically enhanced for readability, then inserted into a rich-text document editor.
 
-First, run the development server:
+## Features
+
+- **Rich document editor** — headings, lists, bold/italic, undo/redo (TipTap)
+- **Screenshot paste & drop** — paste (`Ctrl+V`) or drag images into the editor
+- **AI image enhancement** — server-side super-resolution via [Real-ESRGAN on Replicate](https://replicate.com/nightmareai/real-esrgan) (sharpens and upscales without altering content)
+- **Local storage** — notes saved in your browser (IndexedDB), no account required
+- **Export** — download notes as self-contained HTML or PDF
+
+## Setup
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure Replicate API
+
+Copy the example env file and add your token:
+
+```bash
+cp .env.local.example .env.local
+```
+
+Get a free API token at [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) and set it in `.env.local`:
+
+```
+REPLICATE_API_TOKEN=r8_...
+```
+
+Without a token, pasted images are still inserted but **not enhanced**.
+
+### 3. Run the dev server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Open the app — a note is created automatically
+2. Paste screenshots from your lecture recording into the editor
+3. Each image is sent to `/api/enhance`, processed by Real-ESRGAN, and inserted when ready
+4. Add text, headings, and lists around your screenshots
+5. Export your finished notes as HTML or PDF
 
-## Learn More
+## Tech stack
 
-To learn more about Next.js, take a look at the following resources:
+- **Next.js 16** (App Router) + TypeScript
+- **TipTap** — document editor
+- **Dexie.js** — IndexedDB local storage
+- **Sharp** — server-side image preprocessing
+- **Replicate** — Real-ESRGAN super-resolution model
+- **Tailwind CSS** — styling
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## API
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### `GET /api/enhance`
 
-## Deploy on Vercel
+Returns `{ configured: boolean }` — whether `REPLICATE_API_TOKEN` is set.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### `POST /api/enhance`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Accepts `multipart/form-data` with an `image` field (max 10MB). Returns enhanced JPEG bytes.
+
+## Privacy
+
+- Notes are stored locally in your browser only
+- Pasted images are sent to your Next.js server, which forwards them to Replicate for enhancement
+- No user accounts or cloud note storage in v1

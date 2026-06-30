@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafafa;
+  --foreground: #18181b;
 }
 
 @theme inline {
@@ -14,13 +14,106 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #09090b;
+    --foreground: #fafafa;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* TipTap editor */
+.editor-content .tiptap {
+  outline: none;
+  min-height: calc(100vh - 140px);
+  padding: 2rem 3rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.editor-content .tiptap p.is-editor-empty:first-child::before {
+  color: #a1a1aa;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.editor-content .tiptap h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.75rem;
+}
+
+.editor-content .tiptap h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.editor-content .tiptap ul {
+  list-style: disc;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.editor-content .tiptap mark {
+  border-radius: 0.125rem;
+  padding: 0.125rem 0;
+}
+
+.editor-content .tiptap img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 1rem 0;
+  border: 1px solid #e4e4e7;
+}
+
+@media (prefers-color-scheme: dark) {
+  .editor-content .tiptap img {
+    border-color: #3f3f46;
+  }
+}
+
+/* Enhancing placeholder */
+.enhancing-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  margin: 1rem 0;
+  border-radius: 8px;
+  border: 1px dashed #c7d2fe;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 0.875rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .enhancing-placeholder {
+    border-color: #3730a3;
+    background: #1e1b4b;
+    color: #a5b4fc;
+  }
+}
+
+.enhancing-placeholder-spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
