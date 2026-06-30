@@ -1,5 +1,6 @@
 import Dexie, { type Table } from "dexie";
 import type { Note, StoredNoteContent } from "./types";
+import { generateId } from "./uuid";
 
 const IMAGE_ID_ATTR = "data-image-id";
 
@@ -35,7 +36,7 @@ export async function serializeNoteContent(
 
     let id = img.getAttribute(IMAGE_ID_ATTR);
     if (!id) {
-      id = crypto.randomUUID();
+      id = generateId();
       img.setAttribute(IMAGE_ID_ATTR, id);
     }
 
@@ -77,7 +78,7 @@ export async function getNote(id: string): Promise<Note | undefined> {
 export async function createNote(title = "Untitled note"): Promise<Note> {
   const now = Date.now();
   const note: Note = {
-    id: crypto.randomUUID(),
+    id: generateId(),
     title,
     content: { html: "<p></p>", images: {} },
     updatedAt: now,

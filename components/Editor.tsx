@@ -16,6 +16,7 @@ import {
 } from "@/lib/auto-enhance-preference";
 import { TEXT_COLORS, HIGHLIGHT_COLORS } from "@/lib/editor-colors";
 import EditorColorPicker from "@/components/EditorColorPicker";
+import { generateId } from "@/lib/uuid";
 
 interface EditorProps {
   initialContent: string;
@@ -105,7 +106,7 @@ export default function Editor({
         editor,
         placeholderId,
         url,
-        crypto.randomUUID()
+        generateId()
       );
     } catch (err) {
       const url = URL.createObjectURL(file);
@@ -113,7 +114,7 @@ export default function Editor({
         editor,
         placeholderId,
         url,
-        crypto.randomUUID()
+        generateId()
       );
       onToastRef.current?.(
         err instanceof EnhanceError && err.message === "You are offline"
@@ -139,7 +140,7 @@ export default function Editor({
         type: "image",
         attrs: {
           src: url,
-          "data-image-id": crypto.randomUUID(),
+          "data-image-id": generateId(),
         },
       })
       .run();
@@ -155,7 +156,7 @@ export default function Editor({
       const editor = editorInstanceRef.current;
       if (!editor) return;
 
-      const placeholderId = crypto.randomUUID();
+      const placeholderId = generateId();
       editor
         .chain()
         .focus()
