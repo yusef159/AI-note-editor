@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.gitignore
+.env*
+!.env.local.example
+README.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+npm-debug.log*
+.DS_Store
+coverage
+.vercel

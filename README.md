@@ -40,7 +40,7 @@ Without a token, pasted images are still inserted but **not enhanced**.
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:8473](http://localhost:8473).
 
 ## Usage
 
