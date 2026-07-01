@@ -14,6 +14,14 @@ import {
   getAutoEnhancePreference,
   setAutoEnhancePreference,
 } from "@/lib/auto-enhance-preference";
+import {
+  ENHANCE_SCALE_DEFAULT,
+  ENHANCE_SCALE_MAX,
+  ENHANCE_SCALE_MIN,
+  clampEnhanceScale,
+  getEnhanceScalePreference,
+  setEnhanceScalePreference,
+} from "@/lib/enhance-scale-preference";
 import { TEXT_COLORS, HIGHLIGHT_COLORS } from "@/lib/editor-colors";
 import EditorColorPicker from "@/components/EditorColorPicker";
 import { generateId } from "@/lib/uuid";
@@ -79,13 +87,19 @@ export default function Editor({
   const onToastRef = useRef(onToast);
   const enqueueImageRef = useRef<(file: File) => void>(() => {});
   const autoEnhanceRef = useRef(true);
+  const enhanceScaleRef = useRef(ENHANCE_SCALE_DEFAULT);
   const [autoEnhance, setAutoEnhance] = useState(true);
+  const [enhanceScale, setEnhanceScale] = useState(ENHANCE_SCALE_DEFAULT);
   const [, setSelectionTick] = useState(0);
 
   useEffect(() => {
     const stored = getAutoEnhancePreference();
     setAutoEnhance(stored);
     autoEnhanceRef.current = stored;
+
+    const storedScale = getEnhanceScalePreference();
+    setEnhanceScale(storedScale);
+    enhanceScaleRef.current = storedScale;
   }, []);
 
   useEffect(() => {
@@ -100,7 +114,7 @@ export default function Editor({
     onEnhanceStatusRef.current?.("enhancing");
 
     try {
-      const enhanced = await enhanceImage(file);
+      const enhanced = await enhanceImage(file, enhanceScaleRef.current);
       const url = URL.createObjectURL(enhanced);
       replacePlaceholderWithImage(
         editor,
@@ -172,6 +186,12 @@ export default function Editor({
     },
     [processImage, insertImageDirectly]
   );
+
+  const handleEnhanceScaleChange = useCallback((value: number) => {
+    const clamped = setEnhanceScalePreference(value);
+    enhanceScaleRef.current = clamped;
+    setEnhanceScale(clamped);
+  }, []);
 
   const toggleAutoEnhance = useCallback(() => {
     setAutoEnhance((prev) => {
@@ -310,10 +330,70 @@ export default function Editor({
           label="Redo"
         />
         <div className="w-px h-6 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-        <AutoEnhanceToggle enabled={autoEnhance} onToggle={toggleAutoEnhance} />
+        <div className="ml-auto flex items-center gap-3">
+          <EnhanceScaleControl
+            value={enhanceScale}
+            enabled={autoEnhance}
+            onChange={handleEnhanceScaleChange}
+          />
+          <AutoEnhanceToggle enabled={autoEnhance} onToggle={toggleAutoEnhance} />
+        </div>
       </div>
       <EditorContent editor={editor} className="editor-content flex-1 overflow-y-auto" />
     </div>
+  );
+}
+
+function EnhanceScaleControl({
+  value,
+  enabled,
+  onChange,
+}: {
+  value: number;
+  enabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commitDraft = () => {
+    const parsed = Number(draft);
+    onChange(clampEnhanceScale(parsed));
+  };
+
+  return (
+    <label
+      className={`flex items-center gap-2 text-sm select-none ${
+        enabled
+          ? "text-zinc-600 dark:text-zinc-400"
+          : "text-zinc-400 dark:text-zinc-500"
+      }`}
+      title={`Enhancement upscale factor (${ENHANCE_SCALE_MIN}–${ENHANCE_SCALE_MAX}). Lower values keep files smaller.`}
+    >
+      <span>Scale</span>
+      <input
+        type="number"
+        min={ENHANCE_SCALE_MIN}
+        max={ENHANCE_SCALE_MAX}
+        step="any"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commitDraft}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commitDraft();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className="w-16 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-sm tabular-nums text-zinc-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+        aria-label="Enhancement scale"
+      />
+      <span className="text-xs text-zinc-400 dark:text-zinc-500">×</span>
+    </label>
   );
 }
 
@@ -331,7 +411,7 @@ function AutoEnhanceToggle({
       aria-checked={enabled}
       aria-label="Auto-enhance pasted images"
       onClick={onToggle}
-      className="flex items-center gap-2 ml-auto text-sm text-zinc-600 dark:text-zinc-400 select-none"
+      className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 select-none"
     >
       <span>Auto-enhance</span>
       <span

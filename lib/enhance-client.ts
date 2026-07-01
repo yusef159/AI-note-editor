@@ -10,7 +10,10 @@ export class EnhanceError extends Error {
   }
 }
 
-export async function enhanceImage(blob: Blob): Promise<Blob> {
+export async function enhanceImage(
+  blob: Blob,
+  scale: number
+): Promise<Blob> {
   if (blob.size > MAX_SIZE_BYTES) {
     throw new EnhanceError("Image must be smaller than 10MB");
   }
@@ -21,6 +24,7 @@ export async function enhanceImage(blob: Blob): Promise<Blob> {
 
   const formData = new FormData();
   formData.append("image", blob, "screenshot.png");
+  formData.append("scale", String(scale));
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);

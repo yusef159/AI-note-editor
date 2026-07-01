@@ -15,6 +15,21 @@ const MAX_SIZE_BYTES = 10 * 1024 * 1024;
 // Replicate Real-ESRGAN GPU limit is ~2,096,704 pixels; stay slightly under.
 const MAX_PIXELS = 2_000_000;
 const MODEL = "nightmareai/real-esrgan";
+const SCALE_MIN = 0;
+const SCALE_MAX = 10;
+const SCALE_DEFAULT = 2;
+
+function parseScale(raw: FormDataEntryValue | null): number | null {
+  if (raw === null || raw === "") return SCALE_DEFAULT;
+  if (typeof raw !== "string") return null;
+
+  const scale = Number(raw);
+  if (!Number.isFinite(scale) || scale < SCALE_MIN || scale > SCALE_MAX) {
+    return null;
+  }
+
+  return scale;
+}
 
 export async function POST(request: NextRequest) {
   if (!process.env.REPLICATE_API_TOKEN) {
@@ -27,6 +42,14 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("image");
+    const scale = parseScale(formData.get("scale"));
+
+    if (scale === null) {
+      return NextResponse.json(
+        { error: `Scale must be a number between ${SCALE_MIN} and ${SCALE_MAX}` },
+        { status: 400 }
+      );
+    }
 
     if (!file || !(file instanceof Blob)) {
       return NextResponse.json({ error: "No image provided" }, { status: 400 });
@@ -72,7 +95,7 @@ export async function POST(request: NextRequest) {
     const output = await replicate.run(MODEL, {
       input: {
         image: dataUri,
-        scale: 2,
+        scale,
         face_enhance: false,
       },
     });

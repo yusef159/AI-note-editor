@@ -413,13 +413,14 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
   async function exportHtml() {
     setExporting(true);
     try {
+      const displayTitle = noteDisplayTitle(title);
       const inlined = await inlineImages(html);
       const fullHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
+  <title>${displayTitle}</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #18181b; }
     img { max-width: 100%; height: auto; border-radius: 8px; margin: 1rem 0; }
@@ -428,7 +429,7 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
   </style>
 </head>
 <body>
-  <h1>${title}</h1>
+  <h1>${displayTitle}</h1>
   ${inlined}
 </body>
 </html>`;
@@ -449,6 +450,7 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
   async function exportPdf() {
     setExporting(true);
     try {
+      const displayTitle = noteDisplayTitle(title);
       const inlined = await inlineImages(html);
       const blocks = parseContentBlocks(inlined);
 
@@ -461,7 +463,7 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
       let y = PDF_MARGIN;
       y = await renderTitle(
         pdf,
-        title,
+        displayTitle,
         y,
         contentWidth,
         pageHeight,
@@ -551,6 +553,16 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
   );
 }
 
-function sanitizeFilename(name: string): string {
-  return name.replace(/[^a-z0-9_\-\s]/gi, "").trim() || "lecture-notes";
+function noteDisplayTitle(title: string): string {
+  return title.trim() || "Untitled note";
+}
+
+function sanitizeFilename(title: string): string {
+  const safe = noteDisplayTitle(title)
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/[\x00-\x1f]/g, "")
+    .trim()
+    .replace(/[.\s]+$/g, "")
+    .slice(0, 200);
+  return safe || "Untitled note";
 }

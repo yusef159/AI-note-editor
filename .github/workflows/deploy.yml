@@ -1,0 +1,44 @@
+# Deploy to Raspberry Pi over Tailscale + SSH on push to master.
+#
+# Required GitHub secrets (same names as your other deploy repo):
+#   TS_AUTH_KEY         - Tailscale auth key (ephemeral + reusable recommended)
+#   PI_HOST             - Pi Tailscale hostname (e.g. raspberrypi.your-tailnet.ts.net)
+#   PI_USER             - SSH username on the Pi
+#   PI_SSH_KEY          - Private SSH key authorized on the Pi (~/.ssh/authorized_keys)
+#
+# Optional:
+#   PI_PORT             - SSH port (default 22)
+#   PI_DEPLOY_PATH      - Repo path on the Pi (default ~/ai-note-taking)
+
+name: Deploy to Raspberry Pi
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTH_KEY }}
+          ping: ${{ secrets.PI_HOST }}
+
+      - name: Pull and rebuild on Pi
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PI_HOST }}
+          username: ${{ secrets.PI_USER }}
+          key: ${{ secrets.PI_SSH_KEY }}
+          port: ${{ secrets.PI_PORT || 22 }}
+          script: |
+            set -e
+            DEPLOY_PATH="${{ secrets.PI_DEPLOY_PATH }}"
+            if [ -z "$DEPLOY_PATH" ]; then
+              DEPLOY_PATH="$HOME/ai-note-taking"
+            fi
+            cd "$DEPLOY_PATH"
+            git pull origin master
+            docker compose up -d --build
