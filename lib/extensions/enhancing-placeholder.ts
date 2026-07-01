@@ -8,25 +8,27 @@ export const EnhancingPlaceholder = Node.create({
   addAttributes() {
     return {
       id: { default: null },
+      label: { default: "Processing screenshot…" },
     };
   },
 
   parseHTML() {
-    return [{ tag: 'div[data-enhancing-placeholder]' }];
+    return [{ tag: "div[data-enhancing-placeholder]" }];
   },
 
-  renderHTML({ HTMLAttributes }) {
+  renderHTML({ node, HTMLAttributes }) {
     return [
       "div",
       mergeAttributes(HTMLAttributes, {
         "data-enhancing-placeholder": "",
         class: "enhancing-placeholder",
       }),
+      ["span", { class: "enhancing-placeholder-spinner" }],
       [
         "span",
-        { class: "enhancing-placeholder-spinner" },
+        { class: "enhancing-placeholder-text" },
+        node.attrs.label ?? "Processing screenshot…",
       ],
-      ["span", { class: "enhancing-placeholder-text" }, "Enhancing screenshot…"],
     ];
   },
 });

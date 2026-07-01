@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Editor from "@/components/Editor";
+import Editor, { type ProcessingStatus } from "@/components/Editor";
 import NotesSidebar from "@/components/NotesSidebar";
 import ExportMenu from "@/components/ExportMenu";
 import Toast from "@/components/Toast";
@@ -15,7 +15,13 @@ import {
   loadNoteHtml,
   updateNoteTitle,
 } from "@/lib/db";
+import {
+  modeUsesEnhancement,
+  modeUsesExtract,
+  getPasteSettings,
+} from "@/lib/paste-settings";
 import type { Note } from "@/lib/types";
+import type { ApiStatus } from "@/components/PasteSettingsPanel";
 
 interface EditorPageProps {
   noteId: string;
@@ -29,14 +35,17 @@ export default function EditorPage({ noteId }: EditorPageProps) {
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [enhanceStatus, setEnhanceStatus] = useState<
-    "idle" | "enhancing" | "error"
-  >("idle");
+  const [processingStatus, setProcessingStatus] =
+    useState<ProcessingStatus>("idle");
   const [toast, setToast] = useState<{
     message: string;
     type: "info" | "warning";
   } | null>(null);
-  const [apiConfigured, setApiConfigured] = useState(true);
+  const [apiStatus, setApiStatus] = useState<ApiStatus>({
+    replicateConfigured: true,
+    geminiConfigured: true,
+  });
+  const [pasteSettings, setPasteSettings] = useState(getPasteSettings);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -76,12 +85,22 @@ export default function EditorPage({ noteId }: EditorPageProps) {
   }, [noteId, router]);
 
   useEffect(() => {
-    fetch("/api/enhance")
-      .then((r) => r.json())
-      .then((data: { configured?: boolean }) => {
-        if (!data.configured) setApiConfigured(false);
+    Promise.all([
+      fetch("/api/enhance").then((r) => r.json()),
+      fetch("/api/extract").then((r) => r.json()),
+    ])
+      .then(([enhance, extract]) => {
+        setApiStatus({
+          replicateConfigured: Boolean(enhance.configured),
+          geminiConfigured: Boolean(extract.configured),
+        });
       })
-      .catch(() => setApiConfigured(false));
+      .catch(() => {
+        setApiStatus({
+          replicateConfigured: false,
+          geminiConfigured: false,
+        });
+      });
   }, []);
 
   const scheduleSave = useCallback(
@@ -130,6 +149,30 @@ export default function EditorPage({ noteId }: EditorPageProps) {
     setTimeout(() => setToast(null), 4000);
   };
 
+  const needsReplicate = modeUsesEnhancement(pasteSettings.mode);
+  const needsGemini = modeUsesExtract(pasteSettings.mode);
+  const showApiBanner =
+    (needsReplicate && !apiStatus.replicateConfigured) ||
+    (needsGemini && !apiStatus.geminiConfigured);
+
+  let bannerMessage = "";
+  if (needsReplicate && !apiStatus.replicateConfigured) {
+    bannerMessage =
+      "REPLICATE_API_TOKEN is not set — enhanced image modes will fall back to the original image.";
+  }
+  if (needsGemini && !apiStatus.geminiConfigured) {
+    bannerMessage = bannerMessage
+      ? `${bannerMessage} GEMINI_API_KEY is not set — text extraction modes will fall back to the original image.`
+      : "GEMINI_API_KEY is not set — text extraction modes will fall back to the original image.";
+  }
+
+  const processingLabel =
+    processingStatus === "enhancing"
+      ? "Enhancing…"
+      : processingStatus === "extracting"
+        ? "Extracting text…"
+        : null;
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center text-zinc-400">
@@ -167,10 +210,9 @@ export default function EditorPage({ noteId }: EditorPageProps) {
       />
 
       <main className="flex-1 flex flex-col min-w-0">
-        {!apiConfigured && (
+        {showApiBanner && (
           <div className="bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
-            REPLICATE_API_TOKEN is not set — pasted images will be inserted
-            without enhancement.
+            {bannerMessage}
           </div>
         )}
 
@@ -183,10 +225,10 @@ export default function EditorPage({ noteId }: EditorPageProps) {
             placeholder="Untitled note"
           />
           <div className="flex items-center gap-3 shrink-0">
-            {enhanceStatus === "enhancing" && (
+            {processingLabel && (
               <span className="text-xs text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
                 <span className="enhancing-placeholder-spinner w-3 h-3" />
-                Enhancing…
+                {processingLabel}
               </span>
             )}
             <ExportMenu title={title} html={html} />
@@ -198,8 +240,10 @@ export default function EditorPage({ noteId }: EditorPageProps) {
             key={note?.id}
             initialContent={html}
             onUpdate={scheduleSave}
-            onEnhanceStatus={setEnhanceStatus}
+            onProcessingStatus={setProcessingStatus}
             onToast={showToast}
+            apiStatus={apiStatus}
+            onPasteSettingsChange={setPasteSettings}
           />
         </div>
       </main>

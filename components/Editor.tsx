@@ -2,35 +2,48 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent, type Editor as TiptapEditor } from "@tiptap/react";
+import type { JSONContent } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TextStyle } from "@tiptap/extension-text-style";
 import { Color } from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
+import { Mathematics } from "@tiptap/extension-mathematics";
 import { CustomImage } from "@/lib/extensions/custom-image";
+import { CustomParagraph } from "@/lib/extensions/custom-paragraph";
+import { QuestionGroup } from "@/lib/extensions/question-group";
 import Placeholder from "@tiptap/extension-placeholder";
 import { EnhancingPlaceholder } from "@/lib/extensions/enhancing-placeholder";
 import { enhanceImage, EnhanceError } from "@/lib/enhance-client";
+import { extractImage, ExtractError } from "@/lib/extract-client";
+import { blocksToTiptapContent } from "@/lib/extract-blocks-to-tiptap";
+import { migrateDocumentMath } from "@/lib/migrate-document-math";
 import {
-  getAutoEnhancePreference,
-  setAutoEnhancePreference,
-} from "@/lib/auto-enhance-preference";
+  insertEmptyQuestionGroup,
+  insertContentAtSelection,
+} from "@/lib/question-group-editor";
 import {
-  ENHANCE_SCALE_DEFAULT,
-  ENHANCE_SCALE_MAX,
-  ENHANCE_SCALE_MIN,
-  clampEnhanceScale,
-  getEnhanceScalePreference,
-  setEnhanceScalePreference,
-} from "@/lib/enhance-scale-preference";
+  getPasteSettings,
+  modeUsesExtract,
+  setPasteSettings,
+  type PasteSettings,
+} from "@/lib/paste-settings";
 import { TEXT_COLORS, HIGHLIGHT_COLORS } from "@/lib/editor-colors";
 import EditorColorPicker from "@/components/EditorColorPicker";
+import PasteSettingsPanel, {
+  type ApiStatus,
+} from "@/components/PasteSettingsPanel";
+import AddQuestionGroupButton from "@/components/AddQuestionGroupButton";
 import { generateId } from "@/lib/uuid";
+
+export type ProcessingStatus = "idle" | "enhancing" | "extracting" | "error";
 
 interface EditorProps {
   initialContent: string;
   onUpdate: (html: string) => void;
-  onEnhanceStatus?: (status: "idle" | "enhancing" | "error") => void;
+  onProcessingStatus?: (status: ProcessingStatus) => void;
   onToast?: (message: string, type: "info" | "warning") => void;
+  apiStatus: ApiStatus;
+  onPasteSettingsChange?: (settings: PasteSettings) => void;
 }
 
 function extractImageFiles(
@@ -48,6 +61,23 @@ function extractImageFiles(
   return files;
 }
 
+function findPlaceholderPos(
+  editor: TiptapEditor,
+  placeholderId: string
+): number | null {
+  let pos: number | null = null;
+  editor.state.doc.descendants((node, nodePos) => {
+    if (
+      node.type.name === "enhancingPlaceholder" &&
+      node.attrs.id === placeholderId
+    ) {
+      pos = nodePos;
+      return false;
+    }
+  });
+  return pos;
+}
+
 function replacePlaceholderWithImage(
   editor: TiptapEditor,
   placeholderId: string,
@@ -55,17 +85,9 @@ function replacePlaceholderWithImage(
   imageId: string
 ) {
   editor.commands.command(({ tr, state }) => {
-    let pos: number | null = null;
-    state.doc.descendants((node, nodePos) => {
-      if (
-        node.type.name === "enhancingPlaceholder" &&
-        node.attrs.id === placeholderId
-      ) {
-        pos = nodePos;
-        return false;
-      }
-    });
+    const pos = findPlaceholderPos(editor, placeholderId);
     if (pos === null) return false;
+
     const imageNode = state.schema.nodes.image.create({
       src: url,
       "data-image-id": imageId,
@@ -75,132 +97,293 @@ function replacePlaceholderWithImage(
   });
 }
 
+function replacePlaceholderWithContent(
+  editor: TiptapEditor,
+  placeholderId: string,
+  content: JSONContent[],
+  image?: { url: string; imageId: string }
+) {
+  const pos = findPlaceholderPos(editor, placeholderId);
+  if (pos === null) return;
+
+  const nodes = [...content];
+  if (image) {
+    nodes.push({
+      type: "image",
+      attrs: {
+        src: image.url,
+        "data-image-id": image.imageId,
+      },
+    });
+  }
+
+  editor
+    .chain()
+    .focus()
+    .command(({ tr }) => {
+      tr.delete(pos, pos + 1);
+      return true;
+    })
+    .insertContentAt(pos, nodes)
+    .run();
+}
+
 export default function Editor({
   initialContent,
   onUpdate,
-  onEnhanceStatus,
+  onProcessingStatus,
   onToast,
+  apiStatus,
+  onPasteSettingsChange,
 }: EditorProps) {
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const editorInstanceRef = useRef<TiptapEditor | null>(null);
-  const onEnhanceStatusRef = useRef(onEnhanceStatus);
+  const onProcessingStatusRef = useRef(onProcessingStatus);
   const onToastRef = useRef(onToast);
   const enqueueImageRef = useRef<(file: File) => void>(() => {});
-  const autoEnhanceRef = useRef(true);
-  const enhanceScaleRef = useRef(ENHANCE_SCALE_DEFAULT);
-  const [autoEnhance, setAutoEnhance] = useState(true);
-  const [enhanceScale, setEnhanceScale] = useState(ENHANCE_SCALE_DEFAULT);
+  const pasteSettingsRef = useRef<PasteSettings>(getPasteSettings());
+  const apiStatusRef = useRef(apiStatus);
+  const [pasteSettings, setPasteSettingsState] = useState<PasteSettings>(
+    getPasteSettings()
+  );
   const [, setSelectionTick] = useState(0);
 
   useEffect(() => {
-    const stored = getAutoEnhancePreference();
-    setAutoEnhance(stored);
-    autoEnhanceRef.current = stored;
-
-    const storedScale = getEnhanceScalePreference();
-    setEnhanceScale(storedScale);
-    enhanceScaleRef.current = storedScale;
-  }, []);
+    pasteSettingsRef.current = pasteSettings;
+  }, [pasteSettings]);
 
   useEffect(() => {
-    onEnhanceStatusRef.current = onEnhanceStatus;
-    onToastRef.current = onToast;
-  }, [onEnhanceStatus, onToast]);
+    apiStatusRef.current = apiStatus;
+  }, [apiStatus]);
 
-  const processImage = useCallback(async (file: File, placeholderId: string) => {
+  useEffect(() => {
+    onProcessingStatusRef.current = onProcessingStatus;
+    onToastRef.current = onToast;
+  }, [onProcessingStatus, onToast]);
+
+  const handlePasteSettingsChange = useCallback(
+    (settings: PasteSettings) => {
+      const saved = setPasteSettings(settings);
+      pasteSettingsRef.current = saved;
+      setPasteSettingsState(saved);
+      onPasteSettingsChange?.(saved);
+    },
+    [onPasteSettingsChange]
+  );
+
+  const handleAddQuestionGroup = useCallback(() => {
     const editor = editorInstanceRef.current;
     if (!editor) return;
-
-    onEnhanceStatusRef.current?.("enhancing");
-
-    try {
-      const enhanced = await enhanceImage(file, enhanceScaleRef.current);
-      const url = URL.createObjectURL(enhanced);
-      replacePlaceholderWithImage(
-        editor,
-        placeholderId,
-        url,
-        generateId()
-      );
-    } catch (err) {
-      const url = URL.createObjectURL(file);
-      replacePlaceholderWithImage(
-        editor,
-        placeholderId,
-        url,
-        generateId()
-      );
-      onToastRef.current?.(
-        err instanceof EnhanceError && err.message === "You are offline"
-          ? "You are offline — inserted original image"
-          : "Enhancement failed — inserted original image",
-        "warning"
-      );
-      onEnhanceStatusRef.current?.("error");
-    } finally {
-      onEnhanceStatusRef.current?.("idle");
-    }
+    insertEmptyQuestionGroup(editor);
   }, []);
 
-  const insertImageDirectly = useCallback((file: File) => {
-    const editor = editorInstanceRef.current;
-    if (!editor) return;
+  const insertAtCursor = useCallback(
+    (editor: TiptapEditor, content: JSONContent | JSONContent[]) => {
+      insertContentAtSelection(editor, content);
+    },
+    []
+  );
 
-    const url = URL.createObjectURL(file);
-    editor
-      .chain()
-      .focus()
-      .insertContent({
+  const insertImageDirectly = useCallback(
+    (file: File) => {
+      const editor = editorInstanceRef.current;
+      if (!editor) return;
+
+      const imageNode: JSONContent = {
         type: "image",
         attrs: {
-          src: url,
+          src: URL.createObjectURL(file),
           "data-image-id": generateId(),
         },
-      })
-      .run();
-  }, []);
+      };
+
+      insertAtCursor(editor, imageNode);
+    },
+    [insertAtCursor]
+  );
+
+  const fallbackToOriginalImage = useCallback(
+    (file: File, placeholderId: string, message: string) => {
+      const editor = editorInstanceRef.current;
+      if (!editor) return;
+
+      const url = URL.createObjectURL(file);
+      replacePlaceholderWithImage(editor, placeholderId, url, generateId());
+      onToastRef.current?.(message, "warning");
+      onProcessingStatusRef.current?.("error");
+    },
+    []
+  );
+
+  const processEnhance = useCallback(
+    async (file: File, placeholderId: string) => {
+      const editor = editorInstanceRef.current;
+      if (!editor) return;
+
+      if (!apiStatusRef.current.replicateConfigured) {
+        fallbackToOriginalImage(
+          file,
+          placeholderId,
+          "Replicate is not configured — inserted original image"
+        );
+        return;
+      }
+
+      onProcessingStatusRef.current?.("enhancing");
+
+      try {
+        const enhanced = await enhanceImage(
+          file,
+          pasteSettingsRef.current.enhanceScale
+        );
+        const url = URL.createObjectURL(enhanced);
+        replacePlaceholderWithImage(
+          editor,
+          placeholderId,
+          url,
+          generateId()
+        );
+      } catch (err) {
+        fallbackToOriginalImage(
+          file,
+          placeholderId,
+          err instanceof EnhanceError && err.message === "You are offline"
+            ? "You are offline — inserted original image"
+            : "Enhancement failed — inserted original image"
+        );
+        return;
+      } finally {
+        onProcessingStatusRef.current?.("idle");
+      }
+    },
+    [fallbackToOriginalImage]
+  );
+
+  const processExtract = useCallback(
+    async (
+      file: File,
+      placeholderId: string,
+      includeImage: false | "original" | "enhanced"
+    ) => {
+      const editor = editorInstanceRef.current;
+      if (!editor) return;
+
+      if (!apiStatusRef.current.geminiConfigured) {
+        fallbackToOriginalImage(
+          file,
+          placeholderId,
+          "Gemini is not configured — inserted original image"
+        );
+        return;
+      }
+
+      onProcessingStatusRef.current?.("extracting");
+
+      try {
+        const extractPromise = extractImage(file);
+        const enhancePromise =
+          includeImage === "enhanced"
+            ? enhanceImage(file, pasteSettingsRef.current.enhanceScale).catch(
+                (err) => {
+                  onToastRef.current?.(
+                    err instanceof EnhanceError &&
+                      err.message === "You are offline"
+                      ? "You are offline — using original image"
+                      : "Enhancement failed — using original image",
+                    "warning"
+                  );
+                  return null;
+                }
+              )
+            : Promise.resolve(null);
+
+        const [extractResult, enhancedBlob] = await Promise.all([
+          extractPromise,
+          enhancePromise,
+        ]);
+
+        const content = blocksToTiptapContent(extractResult.blocks);
+        let image: { url: string; imageId: string } | undefined;
+
+        if (includeImage === "original") {
+          image = { url: URL.createObjectURL(file), imageId: generateId() };
+        } else if (includeImage === "enhanced") {
+          const blob = enhancedBlob ?? file;
+          image = { url: URL.createObjectURL(blob), imageId: generateId() };
+        }
+
+        replacePlaceholderWithContent(editor, placeholderId, content, image);
+      } catch (err) {
+        fallbackToOriginalImage(
+          file,
+          placeholderId,
+          err instanceof ExtractError && err.message === "You are offline"
+            ? "You are offline — inserted original image"
+            : "Text extraction failed — inserted original image"
+        );
+        return;
+      } finally {
+        onProcessingStatusRef.current?.("idle");
+      }
+    },
+    [fallbackToOriginalImage]
+  );
+
+  const insertProcessingPlaceholder = useCallback(
+    (placeholderId: string, label: string) => {
+      const editor = editorInstanceRef.current;
+      if (!editor) return;
+
+      const placeholder: JSONContent = {
+        type: "enhancingPlaceholder",
+        attrs: { id: placeholderId, label },
+      };
+
+      insertAtCursor(editor, placeholder);
+    },
+    [insertAtCursor]
+  );
 
   const enqueueImage = useCallback(
     (file: File) => {
-      if (!autoEnhanceRef.current) {
+      const { mode } = pasteSettingsRef.current;
+
+      if (mode === "original") {
         insertImageDirectly(file);
         return;
       }
 
-      const editor = editorInstanceRef.current;
-      if (!editor) return;
-
       const placeholderId = generateId();
-      editor
-        .chain()
-        .focus()
-        .insertContent({
-          type: "enhancingPlaceholder",
-          attrs: { id: placeholderId },
-        })
-        .run();
+      const label = modeUsesExtract(mode)
+        ? "Extracting text…"
+        : "Enhancing screenshot…";
 
-      queueRef.current = queueRef.current.then(() =>
-        processImage(file, placeholderId)
-      );
+      insertProcessingPlaceholder(placeholderId, label);
+
+      queueRef.current = queueRef.current.then(async () => {
+        switch (mode) {
+          case "enhanced":
+            await processEnhance(file, placeholderId);
+            break;
+          case "text_only":
+            await processExtract(file, placeholderId, false);
+            break;
+          case "text_original":
+            await processExtract(file, placeholderId, "original");
+            break;
+          case "text_enhanced":
+            await processExtract(file, placeholderId, "enhanced");
+            break;
+        }
+      });
     },
-    [processImage, insertImageDirectly]
+    [
+      insertImageDirectly,
+      insertProcessingPlaceholder,
+      processEnhance,
+      processExtract,
+    ]
   );
-
-  const handleEnhanceScaleChange = useCallback((value: number) => {
-    const clamped = setEnhanceScalePreference(value);
-    enhanceScaleRef.current = clamped;
-    setEnhanceScale(clamped);
-  }, []);
-
-  const toggleAutoEnhance = useCallback(() => {
-    setAutoEnhance((prev) => {
-      const next = !prev;
-      autoEnhanceRef.current = next;
-      setAutoEnhancePreference(next);
-      return next;
-    });
-  }, []);
 
   useEffect(() => {
     enqueueImageRef.current = enqueueImage;
@@ -208,11 +391,20 @@ export default function Editor({
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({
+        paragraph: false,
+      }),
+      CustomParagraph,
       TextStyle,
       Color,
       Highlight.configure({ multicolor: true }),
+      Mathematics.configure({
+        katexOptions: {
+          throwOnError: false,
+        },
+      }),
       CustomImage.configure({ inline: false, allowBase64: true }),
+      QuestionGroup,
       Placeholder.configure({
         placeholder: "Paste screenshots from your lecture recording here…",
       }),
@@ -237,6 +429,10 @@ export default function Editor({
       },
     },
     onUpdate: ({ editor: e }) => {
+      onUpdate(e.getHTML());
+    },
+    onCreate: ({ editor: e }) => {
+      migrateDocumentMath(e);
       onUpdate(e.getHTML());
     },
   });
@@ -330,104 +526,18 @@ export default function Editor({
           label="Redo"
         />
         <div className="w-px h-6 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-        <div className="ml-auto flex items-center gap-3">
-          <EnhanceScaleControl
-            value={enhanceScale}
-            enabled={autoEnhance}
-            onChange={handleEnhanceScaleChange}
+        <AddQuestionGroupButton onClick={handleAddQuestionGroup} />
+        <div className="w-px h-6 bg-zinc-200 dark:bg-zinc-700 mx-1" />
+        <div className="ml-auto">
+          <PasteSettingsPanel
+            settings={pasteSettings}
+            apiStatus={apiStatus}
+            onChange={handlePasteSettingsChange}
           />
-          <AutoEnhanceToggle enabled={autoEnhance} onToggle={toggleAutoEnhance} />
         </div>
       </div>
       <EditorContent editor={editor} className="editor-content flex-1 overflow-y-auto" />
     </div>
-  );
-}
-
-function EnhanceScaleControl({
-  value,
-  enabled,
-  onChange,
-}: {
-  value: number;
-  enabled: boolean;
-  onChange: (value: number) => void;
-}) {
-  const [draft, setDraft] = useState(String(value));
-
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  const commitDraft = () => {
-    const parsed = Number(draft);
-    onChange(clampEnhanceScale(parsed));
-  };
-
-  return (
-    <label
-      className={`flex items-center gap-2 text-sm select-none ${
-        enabled
-          ? "text-zinc-600 dark:text-zinc-400"
-          : "text-zinc-400 dark:text-zinc-500"
-      }`}
-      title={`Enhancement upscale factor (${ENHANCE_SCALE_MIN}–${ENHANCE_SCALE_MAX}). Lower values keep files smaller.`}
-    >
-      <span>Scale</span>
-      <input
-        type="number"
-        min={ENHANCE_SCALE_MIN}
-        max={ENHANCE_SCALE_MAX}
-        step="any"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commitDraft}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commitDraft();
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-        className="w-16 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-sm tabular-nums text-zinc-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-        aria-label="Enhancement scale"
-      />
-      <span className="text-xs text-zinc-400 dark:text-zinc-500">×</span>
-    </label>
-  );
-}
-
-function AutoEnhanceToggle({
-  enabled,
-  onToggle,
-}: {
-  enabled: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={enabled}
-      aria-label="Auto-enhance pasted images"
-      onClick={onToggle}
-      className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 select-none"
-    >
-      <span>Auto-enhance</span>
-      <span
-        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
-          enabled
-            ? "bg-indigo-600 dark:bg-indigo-500"
-            : "bg-zinc-300 dark:bg-zinc-600"
-        }`}
-      >
-        <span
-          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-            enabled ? "translate-x-4" : "translate-x-0.5"
-          } mt-0.5`}
-        />
-      </span>
-    </button>
   );
 }
 

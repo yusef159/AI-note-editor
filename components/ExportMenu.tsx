@@ -3,6 +3,12 @@
 import { useState } from "react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
+import { renderKatexInHtml } from "@/lib/render-katex-html";
+import { generateQuestionGroupColorCss } from "@/lib/question-group-colors";
+import {
+  isQuestionGroupElement,
+  placeQuestionGroupPdf,
+} from "@/lib/export-question-group-pdf";
 
 interface ExportMenuProps {
   title: string;
@@ -26,6 +32,24 @@ const EXPORT_CSS = `
   ul, ol { margin: 0; padding: 4px 0 4px 1.5em; }
   li { margin: 0.2em 0; }
   blockquote { margin: 0; padding: 4px 0 4px 1em; border-left: 3px solid #d4d4d8; }
+  .katex-display { margin: 0.5em 0; overflow-x: auto; }
+  .question-group {
+    margin: 1rem 0;
+    padding: 0.75rem 1rem 1rem;
+    border: 1px solid #c7d2fe;
+    border-radius: 10px;
+    background: #f8fafc;
+  }
+  .question-group-header {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #4338ca;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #e0e7ff;
+  }
+  .question-group-body > * + * { margin-top: 0.5rem; }
+  ${generateQuestionGroupColorCss()}
 `;
 
 const HTML2CANVAS_OPTS = {
@@ -171,6 +195,7 @@ function parseContentBlocks(html: string): HTMLElement[] {
   return Array.from(doc.body.children).filter((el) => {
     if (!(el instanceof HTMLElement)) return false;
     if (el.hasAttribute("data-enhancing-placeholder")) return false;
+    if (el.hasAttribute("data-question-group")) return true;
     if (el.tagName === "IMG") return true;
     if (!el.textContent?.trim() && !el.querySelector("img")) return false;
     return true;
@@ -292,14 +317,16 @@ async function placeImageBlock(
   contentWidth: number,
   contentHeight: number,
   pageHeight: number,
-  margin: number
+  margin: number,
+  horizontalInset = 0
 ): Promise<number> {
   const resolved = await resolveImageData(img);
   if (!resolved) return y;
 
   const { dataUrl, width: naturalW, height: naturalH } = resolved;
+  const innerWidth = contentWidth - horizontalInset * 2;
 
-  let drawW = contentWidth;
+  let drawW = innerWidth;
   let drawH = (naturalH / naturalW) * drawW;
 
   if (drawH > contentHeight) {
@@ -310,7 +337,7 @@ async function placeImageBlock(
 
   y = ensureSpace(pdf, y, drawH, pageHeight, margin);
 
-  const x = margin + (contentWidth - drawW) / 2;
+  const x = margin + horizontalInset + (innerWidth - drawW) / 2;
   pdf.addImage(dataUrl, imageFormat(dataUrl), x, y, drawW, drawH);
   return y + drawH + BLOCK_GAP;
 }
@@ -356,8 +383,10 @@ async function placeHtmlBlock(
   contentWidth: number,
   contentHeight: number,
   pageHeight: number,
-  margin: number
+  margin: number,
+  options: { allowSlice?: boolean; blockGap?: number } = {}
 ): Promise<number> {
+  const { allowSlice = true, blockGap = BLOCK_GAP } = options;
   const content = stage.querySelector(".export-content") as HTMLDivElement;
   const canvas = await html2canvas(content, {
     ...HTML2CANVAS_OPTS,
@@ -367,6 +396,19 @@ async function placeHtmlBlock(
 
   const blockHeight = canvas.height / CANVAS_SCALE;
   if (blockHeight <= 0) return y;
+
+  if (!allowSlice && blockHeight > contentHeight) {
+    y = ensureSpace(pdf, y, contentHeight, pageHeight, margin);
+    pdf.addImage(
+      canvas.toDataURL("image/png"),
+      "PNG",
+      margin,
+      y,
+      contentWidth,
+      contentHeight
+    );
+    return y + contentHeight + blockGap;
+  }
 
   if (blockHeight <= contentHeight) {
     y = ensureSpace(pdf, y, blockHeight, pageHeight, margin);
@@ -378,7 +420,7 @@ async function placeHtmlBlock(
       contentWidth,
       blockHeight
     );
-    return y + blockHeight + BLOCK_GAP;
+    return y + blockHeight + blockGap;
   }
 
   let srcY = 0;
@@ -403,7 +445,12 @@ async function placeHtmlBlock(
     }
   }
 
-  return y + BLOCK_GAP;
+  return y + blockGap;
+}
+
+async function prepareExportHtml(html: string): Promise<string> {
+  const inlined = await inlineImages(html);
+  return renderKatexInHtml(inlined);
 }
 
 export default function ExportMenu({ title, html }: ExportMenuProps) {
@@ -414,23 +461,45 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
     setExporting(true);
     try {
       const displayTitle = noteDisplayTitle(title);
-      const inlined = await inlineImages(html);
+      const prepared = await prepareExportHtml(html);
       const fullHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${displayTitle}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" />
   <style>
     body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #18181b; }
     img { max-width: 100%; height: auto; border-radius: 8px; margin: 1rem 0; }
     h2 { margin-top: 1.5rem; }
     ul { padding-left: 1.5rem; }
+    .question-group {
+      margin: 1.25rem 0;
+      padding: 0.75rem 1rem 1rem;
+      border: 1px solid #c7d2fe;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+    .question-group-header {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #4338ca;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid #e0e7ff;
+    }
+    .question-group-body > * + * { margin-top: 0.5rem; }
+    ${generateQuestionGroupColorCss()}
+    @media print {
+      .question-group { break-inside: avoid-page; page-break-inside: avoid; }
+      .question-group-body img { break-inside: avoid; page-break-inside: avoid; }
+    }
   </style>
 </head>
 <body>
   <h1>${displayTitle}</h1>
-  ${inlined}
+  ${prepared}
 </body>
 </html>`;
 
@@ -451,8 +520,8 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
     setExporting(true);
     try {
       const displayTitle = noteDisplayTitle(title);
-      const inlined = await inlineImages(html);
-      const blocks = parseContentBlocks(inlined);
+      const prepared = await prepareExportHtml(html);
+      const blocks = parseContentBlocks(prepared);
 
       const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
       const pageWidth = pdf.internal.pageSize.getWidth();
@@ -478,6 +547,29 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
         for (const block of blocks) {
           content.innerHTML = "";
           const blockEl = document.importNode(block, true) as HTMLElement;
+
+          if (isQuestionGroupElement(blockEl)) {
+            y = await placeQuestionGroupPdf(
+              pdf,
+              stage,
+              blockEl,
+              y,
+              contentWidth,
+              contentHeight,
+              pageHeight,
+              PDF_MARGIN,
+              {
+                html2canvasOpts: HTML2CANVAS_OPTS,
+                ensureSpace,
+                placeHtmlBlock,
+                resolveImageData,
+                waitForImages,
+                blockGap: BLOCK_GAP,
+              }
+            );
+            continue;
+          }
+
           content.appendChild(blockEl);
           await waitForImages(content);
 

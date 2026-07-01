@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Replicate from "replicate";
 import sharp from "sharp";
+import { prepareImageForEnhance } from "@/lib/prepare-image-buffer";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -12,8 +13,6 @@ export async function GET() {
 }
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024;
-// Replicate Real-ESRGAN GPU limit is ~2,096,704 pixels; stay slightly under.
-const MAX_PIXELS = 2_000_000;
 const MODEL = "nightmareai/real-esrgan";
 const SCALE_MIN = 0;
 const SCALE_MAX = 10;
@@ -70,24 +69,7 @@ export async function POST(request: NextRequest) {
     }
 
     const inputBuffer = Buffer.from(await file.arrayBuffer());
-
-    let processed = sharp(inputBuffer).rotate();
-    const metadata = await processed.metadata();
-
-    if (metadata.width && metadata.height) {
-      const pixels = metadata.width * metadata.height;
-      if (pixels > MAX_PIXELS) {
-        const scale = Math.sqrt(MAX_PIXELS / pixels);
-        processed = processed.resize({
-          width: Math.floor(metadata.width * scale),
-          height: Math.floor(metadata.height * scale),
-          fit: "inside",
-          withoutEnlargement: true,
-        });
-      }
-    }
-
-    const preparedBuffer = await processed.jpeg({ quality: 92 }).toBuffer();
+    const preparedBuffer = await prepareImageForEnhance(inputBuffer);
     const dataUri = `data:image/jpeg;base64,${preparedBuffer.toString("base64")}`;
 
     const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
