@@ -34,6 +34,7 @@ import PasteSettingsPanel, {
 } from "@/components/PasteSettingsPanel";
 import AddQuestionGroupButton from "@/components/AddQuestionGroupButton";
 import { generateId } from "@/lib/uuid";
+import { createImageObjectUrl } from "@/lib/image-blob-registry";
 
 export type ProcessingStatus = "idle" | "enhancing" | "extracting" | "error";
 
@@ -189,11 +190,12 @@ export default function Editor({
       const editor = editorInstanceRef.current;
       if (!editor) return;
 
+      const imageId = generateId();
       const imageNode: JSONContent = {
         type: "image",
         attrs: {
-          src: URL.createObjectURL(file),
-          "data-image-id": generateId(),
+          src: createImageObjectUrl(file, imageId),
+          "data-image-id": imageId,
         },
       };
 
@@ -207,8 +209,9 @@ export default function Editor({
       const editor = editorInstanceRef.current;
       if (!editor) return;
 
-      const url = URL.createObjectURL(file);
-      replacePlaceholderWithImage(editor, placeholderId, url, generateId());
+      const imageId = generateId();
+      const url = createImageObjectUrl(file, imageId);
+      replacePlaceholderWithImage(editor, placeholderId, url, imageId);
       onToastRef.current?.(message, "warning");
       onProcessingStatusRef.current?.("error");
     },
@@ -236,12 +239,13 @@ export default function Editor({
           file,
           pasteSettingsRef.current.enhanceScale
         );
-        const url = URL.createObjectURL(enhanced);
+        const imageId = generateId();
+        const url = createImageObjectUrl(enhanced, imageId);
         replacePlaceholderWithImage(
           editor,
           placeholderId,
           url,
-          generateId()
+          imageId
         );
       } catch (err) {
         fallbackToOriginalImage(
@@ -306,10 +310,18 @@ export default function Editor({
         let image: { url: string; imageId: string } | undefined;
 
         if (includeImage === "original") {
-          image = { url: URL.createObjectURL(file), imageId: generateId() };
+          const imageId = generateId();
+          image = {
+            url: createImageObjectUrl(file, imageId),
+            imageId,
+          };
         } else if (includeImage === "enhanced") {
           const blob = enhancedBlob ?? file;
-          image = { url: URL.createObjectURL(blob), imageId: generateId() };
+          const imageId = generateId();
+          image = {
+            url: createImageObjectUrl(blob, imageId),
+            imageId,
+          };
         }
 
         replacePlaceholderWithContent(editor, placeholderId, content, image);

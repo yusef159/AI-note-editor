@@ -6,6 +6,10 @@ import { jsPDF } from "jspdf";
 import { renderKatexInHtml } from "@/lib/render-katex-html";
 import { generateQuestionGroupColorCss } from "@/lib/question-group-colors";
 import {
+  blobToDataUrl,
+  getImageBlob,
+} from "@/lib/image-blob-registry";
+import {
   isQuestionGroupElement,
   placeQuestionGroupPdf,
 } from "@/lib/export-question-group-pdf";
@@ -93,34 +97,74 @@ function waitForSingleImage(img: HTMLImageElement): Promise<void> {
   });
 }
 
-async function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+async function blobFromRegisteredImage(
+  imageId: string | null
+): Promise<Blob | null> {
+  if (!imageId) return null;
+  return getImageBlob(imageId) ?? null;
 }
 
-async function imageElementToDataUrl(img: HTMLImageElement): Promise<string | null> {
+async function dataUrlFromBlob(
+  blob: Blob
+): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  const dataUrl = await blobToDataUrl(blob);
+  const probe = new Image();
+  probe.src = dataUrl;
+  await waitForSingleImage(probe);
+  if (!probe.naturalWidth || !probe.naturalHeight) return null;
+  return {
+    dataUrl,
+    width: probe.naturalWidth,
+    height: probe.naturalHeight,
+  };
+}
+
+async function imageElementToDataUrl(
+  img: HTMLImageElement,
+  imageId: string | null
+): Promise<string | null> {
   await waitForSingleImage(img);
   if (!img.naturalWidth || !img.naturalHeight) return null;
 
   if (img.src.startsWith("data:")) return img.src;
+
+  const registered = await blobFromRegisteredImage(imageId);
+  if (registered) {
+    return blobToDataUrl(registered);
+  }
+
+  if (img.src.startsWith("blob:")) {
+    try {
+      return blobToDataUrl(await (await fetch(img.src)).blob());
+    } catch {
+      return null;
+    }
+  }
 
   const canvas = document.createElement("canvas");
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
-  ctx.drawImage(img, 0, 0);
-  return canvas.toDataURL("image/png");
+  try {
+    ctx.drawImage(img, 0, 0);
+    return canvas.toDataURL("image/png");
+  } catch {
+    return null;
+  }
 }
 
 async function resolveImageData(
   img: HTMLImageElement
 ): Promise<{ dataUrl: string; width: number; height: number } | null> {
   const imageId = getImageId(img);
+
+  const registered = await blobFromRegisteredImage(imageId);
+  if (registered) {
+    const resolved = await dataUrlFromBlob(registered);
+    if (resolved) return resolved;
+  }
+
   const candidates: HTMLImageElement[] = [img];
   if (imageId) {
     const live = findLoadedEditorImage(imageId);
@@ -128,7 +172,7 @@ async function resolveImageData(
   }
 
   for (const candidate of candidates) {
-    const dataUrl = await imageElementToDataUrl(candidate);
+    const dataUrl = await imageElementToDataUrl(candidate, imageId);
     if (dataUrl) {
       return {
         dataUrl,
@@ -155,17 +199,8 @@ async function resolveImageData(
   if (src && !src.startsWith("data:")) {
     try {
       const res = await fetch(src);
-      const dataUrl = await blobToDataUrl(await res.blob());
-      const probe = new Image();
-      probe.src = dataUrl;
-      await waitForSingleImage(probe);
-      if (probe.naturalWidth && probe.naturalHeight) {
-        return {
-          dataUrl,
-          width: probe.naturalWidth,
-          height: probe.naturalHeight,
-        };
-      }
+      const resolved = await dataUrlFromBlob(await res.blob());
+      if (resolved) return resolved;
     } catch {
       // no image data available
     }

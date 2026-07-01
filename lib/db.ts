@@ -1,4 +1,9 @@
 import type { Note, StoredNoteContent } from "./types";
+import {
+  clearImageBlobs,
+  createImageObjectUrl,
+  getImageBlob,
+} from "./image-blob-registry";
 import { generateId } from "./uuid";
 
 const IMAGE_ID_ATTR = "data-image-id";
@@ -97,9 +102,25 @@ function summaryToNote(summary: NoteSummary): Note {
   };
 }
 
-async function blobUrlToBlob(url: string): Promise<Blob> {
-  const res = await fetch(url);
-  return res.blob();
+async function blobUrlToBlob(
+  url: string,
+  imageId?: string | null
+): Promise<Blob> {
+  if (imageId) {
+    const registered = getImageBlob(imageId);
+    if (registered) return registered;
+  }
+
+  try {
+    const res = await fetch(url);
+    return res.blob();
+  } catch {
+    if (imageId) {
+      const registered = getImageBlob(imageId);
+      if (registered) return registered;
+    }
+    throw new Error("Could not read image data");
+  }
 }
 
 export async function serializeNoteContent(
@@ -120,7 +141,7 @@ export async function serializeNoteContent(
       img.setAttribute(IMAGE_ID_ATTR, id);
     }
 
-    images[id] = await blobUrlToBlob(src);
+    images[id] = await blobUrlToBlob(src, id);
     img.setAttribute("src", `${IMAGE_ID_ATTR}://${id}`);
   }
 
@@ -138,8 +159,7 @@ export async function deserializeNoteContent(
     const id = src.replace(`${IMAGE_ID_ATTR}://`, "");
     const blob = content.images[id];
     if (blob) {
-      const url = URL.createObjectURL(blob);
-      img.setAttribute("src", url);
+      img.setAttribute("src", createImageObjectUrl(blob, id));
       img.setAttribute(IMAGE_ID_ATTR, id);
     }
   }
@@ -216,6 +236,7 @@ export async function saveNote(
 }
 
 export async function loadNoteHtml(note: Note): Promise<string> {
+  clearImageBlobs();
   return deserializeNoteContent(note.content);
 }
 
