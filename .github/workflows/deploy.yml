@@ -2,13 +2,14 @@
 #
 # Required GitHub secrets (same names as your other deploy repo):
 #   TS_AUTH_KEY         - Tailscale auth key (ephemeral + reusable recommended)
-#   PI_HOST             - Pi Tailscale hostname (e.g. raspberrypi.your-tailnet.ts.net)
+#   PI_HOST             - Pi Tailscale IP (100.x.x.x) — run `tailscale ip -4` on the Pi
+#                         Or full MagicDNS name: raspberrypi.your-tailnet.ts.net
 #   PI_USER             - SSH username on the Pi
 #   PI_SSH_KEY          - Private SSH key authorized on the Pi (~/.ssh/authorized_keys)
 #
 # Optional:
 #   PI_PORT             - SSH port (default 22)
-#   PI_DEPLOY_PATH      - Repo path on the Pi (default ~/ai-note-taking)
+#   PI_DEPLOY_PATH      - Repo path on the Pi (default /home/yusefpi/apps/AI-note-editor)
 
 name: Deploy to Raspberry Pi
 
@@ -24,7 +25,9 @@ jobs:
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TS_AUTH_KEY }}
-          ping: ${{ secrets.PI_HOST }}
+
+      - name: Wait for Pi on tailnet
+        run: tailscale ping -c 5 ${{ secrets.PI_HOST }}
 
       - name: Pull and rebuild on Pi
         uses: appleboy/ssh-action@v1.2.0
@@ -37,7 +40,7 @@ jobs:
             set -e
             DEPLOY_PATH="${{ secrets.PI_DEPLOY_PATH }}"
             if [ -z "$DEPLOY_PATH" ]; then
-              DEPLOY_PATH="$HOME/ai-note-taking"
+              DEPLOY_PATH="/home/yusefpi/apps/AI-note-editor"
             fi
             cd "$DEPLOY_PATH"
             git pull origin master
