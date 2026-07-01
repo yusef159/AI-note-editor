@@ -26,9 +26,6 @@ jobs:
         with:
           authkey: ${{ secrets.TS_AUTH_KEY }}
 
-      - name: Wait for Pi on tailnet
-        run: tailscale ping -c 5 ${{ secrets.PI_HOST }}
-
       - name: Pull and rebuild on Pi
         uses: appleboy/ssh-action@v1.2.0
         with:
