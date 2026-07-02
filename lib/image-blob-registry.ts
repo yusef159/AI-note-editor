@@ -35,3 +35,24 @@ export function createImageObjectUrl(
   registerImageBlob(id, blob);
   return URL.createObjectURL(blob);
 }
+
+export async function resolveImageBlob(
+  url: string,
+  imageId?: string | null
+): Promise<Blob> {
+  if (imageId) {
+    const registered = getImageBlob(imageId);
+    if (registered) return registered;
+  }
+
+  try {
+    const res = await fetch(url);
+    return res.blob();
+  } catch {
+    if (imageId) {
+      const registered = getImageBlob(imageId);
+      if (registered) return registered;
+    }
+    throw new Error("Could not read image data");
+  }
+}

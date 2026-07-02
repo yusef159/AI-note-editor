@@ -34,7 +34,12 @@ import PasteSettingsPanel, {
 } from "@/components/PasteSettingsPanel";
 import AddQuestionGroupButton from "@/components/AddQuestionGroupButton";
 import { generateId } from "@/lib/uuid";
-import { createImageObjectUrl } from "@/lib/image-blob-registry";
+import {
+  createImageObjectUrl,
+  resolveImageBlob,
+  unregisterImageBlob,
+} from "@/lib/image-blob-registry";
+import { setImageNodeActions } from "@/lib/image-node-actions";
 
 export type ProcessingStatus = "idle" | "enhancing" | "extracting" | "error";
 
@@ -356,6 +361,127 @@ export default function Editor({
     [insertAtCursor]
   );
 
+  const enhanceExistingImage = useCallback(async (pos: number) => {
+    const editor = editorInstanceRef.current;
+    if (!editor) return;
+
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== "image") return;
+
+    const src = node.attrs.src as string;
+    const imageId = (node.attrs["data-image-id"] as string | null) ?? null;
+
+    if (!apiStatusRef.current.replicateConfigured) {
+      onToastRef.current?.(
+        "Replicate is not configured — cannot enhance image",
+        "warning"
+      );
+      return;
+    }
+
+    onProcessingStatusRef.current?.("enhancing");
+
+    try {
+      const blob = await resolveImageBlob(src, imageId);
+      const enhanced = await enhanceImage(
+        blob,
+        pasteSettingsRef.current.enhanceScale
+      );
+      const newId = generateId();
+      const newUrl = createImageObjectUrl(enhanced, newId);
+
+      if (imageId) unregisterImageBlob(imageId);
+
+      editor.commands.command(({ tr, state }) => {
+        const current = state.doc.nodeAt(pos);
+        if (!current || current.type.name !== "image") return false;
+        tr.setNodeMarkup(pos, undefined, {
+          ...current.attrs,
+          src: newUrl,
+          "data-image-id": newId,
+        });
+        return true;
+      });
+    } catch (err) {
+      onToastRef.current?.(
+        err instanceof EnhanceError && err.message === "You are offline"
+          ? "You are offline — could not enhance image"
+          : "Enhancement failed",
+        "warning"
+      );
+    } finally {
+      onProcessingStatusRef.current?.("idle");
+    }
+  }, []);
+
+  const extractExistingImage = useCallback(async (pos: number) => {
+    const editor = editorInstanceRef.current;
+    if (!editor) return;
+
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== "image") return;
+
+    const src = node.attrs.src as string;
+    const imageId = (node.attrs["data-image-id"] as string | null) ?? null;
+
+    if (!apiStatusRef.current.geminiConfigured) {
+      onToastRef.current?.(
+        "Gemini is not configured — cannot convert image to text",
+        "warning"
+      );
+      return;
+    }
+
+    onProcessingStatusRef.current?.("extracting");
+
+    try {
+      const blob = await resolveImageBlob(src, imageId);
+      const extractResult = await extractImage(blob);
+      const content = blocksToTiptapContent(extractResult.blocks);
+
+      if (imageId) unregisterImageBlob(imageId);
+
+      editor
+        .chain()
+        .focus()
+        .command(({ tr, state }) => {
+          const current = state.doc.nodeAt(pos);
+          if (!current || current.type.name !== "image") return false;
+          tr.delete(pos, pos + current.nodeSize);
+          return true;
+        })
+        .insertContentAt(pos, content)
+        .run();
+    } catch (err) {
+      onToastRef.current?.(
+        err instanceof ExtractError && err.message === "You are offline"
+          ? "You are offline — could not extract text"
+          : "Text extraction failed",
+        "warning"
+      );
+    } finally {
+      onProcessingStatusRef.current?.("idle");
+    }
+  }, []);
+
+  const deleteExistingImage = useCallback((pos: number) => {
+    const editor = editorInstanceRef.current;
+    if (!editor) return;
+
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== "image") return;
+
+    const imageId = (node.attrs["data-image-id"] as string | null) ?? null;
+    if (imageId) unregisterImageBlob(imageId);
+
+    editor.commands.command(({ tr, state }) => {
+      const current = state.doc.nodeAt(pos);
+      if (!current || current.type.name !== "image") return false;
+      tr.delete(pos, pos + current.nodeSize);
+      return true;
+    });
+  }, []);
+
   const enqueueImage = useCallback(
     (file: File) => {
       const { mode } = pasteSettingsRef.current;
@@ -396,6 +522,16 @@ export default function Editor({
       processExtract,
     ]
   );
+
+  useEffect(() => {
+    setImageNodeActions({
+      onEnhance: enhanceExistingImage,
+      onExtract: extractExistingImage,
+      onDelete: deleteExistingImage,
+    });
+
+    return () => setImageNodeActions(null);
+  }, [enhanceExistingImage, extractExistingImage, deleteExistingImage]);
 
   useEffect(() => {
     enqueueImageRef.current = enqueueImage;
