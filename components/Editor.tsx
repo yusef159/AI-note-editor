@@ -149,6 +149,7 @@ export default function Editor({
   const enqueueImageRef = useRef<(file: File) => void>(() => {});
   const pasteSettingsRef = useRef<PasteSettings>(getPasteSettings());
   const apiStatusRef = useRef(apiStatus);
+  const isInitializingRef = useRef(true);
   const [pasteSettings, setPasteSettingsState] = useState<PasteSettings>(
     getPasteSettings()
   );
@@ -577,11 +578,14 @@ export default function Editor({
       },
     },
     onUpdate: ({ editor: e }) => {
+      if (isInitializingRef.current) return;
       onUpdate(e.getHTML());
     },
     onCreate: ({ editor: e }) => {
       migrateDocumentMath(e);
-      onUpdate(e.getHTML());
+      queueMicrotask(() => {
+        isInitializingRef.current = false;
+      });
     },
   });
 
