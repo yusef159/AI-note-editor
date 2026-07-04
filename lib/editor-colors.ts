@@ -3,8 +3,7 @@ export interface EditorColor {
   value: string | null;
 }
 
-export const TEXT_COLORS: EditorColor[] = [
-  { name: "Default", value: null },
+const SOLID_COLORS: EditorColor[] = [
   { name: "Black", value: "#09090b" },
   { name: "Slate", value: "#475569" },
   { name: "Gray", value: "#71717a" },
@@ -28,8 +27,7 @@ export const TEXT_COLORS: EditorColor[] = [
   { name: "Pink", value: "#db2777" },
 ];
 
-export const HIGHLIGHT_COLORS: EditorColor[] = [
-  { name: "None", value: null },
+const SOFT_COLORS: EditorColor[] = [
   { name: "Gray", value: "#e4e4e7" },
   { name: "Slate", value: "#e2e8f0" },
   { name: "Red", value: "#fecaca" },
@@ -49,4 +47,22 @@ export const HIGHLIGHT_COLORS: EditorColor[] = [
   { name: "Purple", value: "#e9d5ff" },
   { name: "Fuchsia", value: "#f5d0fe" },
   { name: "Pink", value: "#fbcfe8" },
+];
+
+export const TEXT_COLORS: EditorColor[] = [
+  { name: "Default", value: null },
+  ...SOLID_COLORS,
+  ...SOFT_COLORS.map((color) => ({
+    ...color,
+    name: `Soft ${color.name}`,
+  })),
+];
+
+export const HIGHLIGHT_COLORS: EditorColor[] = [
+  { name: "None", value: null },
+  ...SOFT_COLORS,
+  ...SOLID_COLORS.map((color) => ({
+    ...color,
+    name: `Solid ${color.name}`,
+  })),
 ];

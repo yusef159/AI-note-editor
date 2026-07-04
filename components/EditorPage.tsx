@@ -223,8 +223,9 @@ export default function EditorPage({ noteId }: EditorPageProps) {
       : processingStatus === "extracting"
         ? "Extracting text…"
         : null;
+  const hasLoadedShell = note !== null || notes.length > 0 || groups.length > 0;
 
-  if (loading) {
+  if (loading && !hasLoadedShell) {
     return (
       <div className="flex h-screen items-center justify-center text-zinc-400">
         Loading note…
@@ -232,7 +233,7 @@ export default function EditorPage({ noteId }: EditorPageProps) {
     );
   }
 
-  if (loadError) {
+  if (loadError && !hasLoadedShell) {
     return (
       <div className="flex h-screen items-center justify-center p-6">
         <div className="max-w-md text-center space-y-4">
@@ -267,42 +268,66 @@ export default function EditorPage({ noteId }: EditorPageProps) {
       />
 
       <main className="flex-1 flex flex-col min-w-0">
-        {showApiBanner && (
-          <div className="bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
-            {bannerMessage}
+        {loadError ? (
+          <div className="flex h-full items-center justify-center p-6">
+            <div className="max-w-md text-center space-y-4">
+              <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                Could not load note
+              </h1>
+              <p className="text-sm text-zinc-500">{loadError}</p>
+              <button
+                type="button"
+                onClick={() => router.replace("/")}
+                className="rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium py-2 px-4 transition-colors"
+              >
+                Go to home
+              </button>
+            </div>
           </div>
-        )}
-
-        <header className="flex items-center gap-4 border-b border-zinc-200 dark:border-zinc-800 px-6 py-3 bg-white dark:bg-zinc-900">
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            className="flex-1 text-xl font-semibold bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400"
-            placeholder="Untitled note"
-          />
-          <div className="flex items-center gap-3 shrink-0">
-            {processingLabel && (
-              <span className="text-xs text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-                <span className="enhancing-placeholder-spinner w-3 h-3" />
-                {processingLabel}
-              </span>
+        ) : loading ? (
+          <div className="flex h-full items-center justify-center text-zinc-400">
+            Loading note…
+          </div>
+        ) : (
+          <>
+            {showApiBanner && (
+              <div className="bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
+                {bannerMessage}
+              </div>
             )}
-            <ExportMenu title={title} html={html} />
-          </div>
-        </header>
 
-        <div className="flex-1 overflow-hidden">
-          <Editor
-            key={note?.id}
-            initialContent={html}
-            onUpdate={scheduleSave}
-            onProcessingStatus={setProcessingStatus}
-            onToast={showToast}
-            apiStatus={apiStatus}
-            onPasteSettingsChange={setPasteSettings}
-          />
-        </div>
+            <header className="flex items-center gap-4 border-b border-zinc-200 dark:border-zinc-800 px-6 py-3 bg-white dark:bg-zinc-900">
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => handleTitleChange(e.target.value)}
+                className="flex-1 text-xl font-semibold bg-transparent outline-none text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400"
+                placeholder="Untitled note"
+              />
+              <div className="flex items-center gap-3 shrink-0">
+                {processingLabel && (
+                  <span className="text-xs text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                    <span className="enhancing-placeholder-spinner w-3 h-3" />
+                    {processingLabel}
+                  </span>
+                )}
+                <ExportMenu title={title} html={html} />
+              </div>
+            </header>
+
+            <div className="flex-1 overflow-hidden">
+              <Editor
+                key={note?.id}
+                initialContent={html}
+                onUpdate={scheduleSave}
+                onProcessingStatus={setProcessingStatus}
+                onToast={showToast}
+                apiStatus={apiStatus}
+                onPasteSettingsChange={setPasteSettings}
+              />
+            </div>
+          </>
+        )}
       </main>
 
       <Toast
