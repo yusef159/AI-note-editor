@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createNote, listNoteSummaries } from "@/lib/notes-store";
+import {
+  createNote,
+  isValidNoteGroupId,
+  listNoteSummaries,
+} from "@/lib/notes-store";
 
 export const runtime = "nodejs";
 
@@ -24,7 +28,11 @@ export async function POST(request: NextRequest) {
       typeof body.title === "string" && body.title.trim()
         ? body.title.trim()
         : "Untitled note";
-    const note = await createNote(title);
+    const groupId =
+      typeof body.groupId === "string" && isValidNoteGroupId(body.groupId)
+        ? body.groupId
+        : null;
+    const note = await createNote(title, groupId);
     return NextResponse.json(note, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

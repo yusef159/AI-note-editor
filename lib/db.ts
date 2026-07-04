@@ -1,4 +1,4 @@
-import type { Note, StoredNoteContent } from "./types";
+import type { Note, NoteGroup, StoredNoteContent } from "./types";
 import {
   clearImageBlobs,
   createImageObjectUrl,
@@ -16,6 +16,7 @@ interface WireImage {
 interface WireNote {
   id: string;
   title: string;
+  groupId: string | null;
   content: {
     html: string;
     images: Record<string, WireImage>;
@@ -27,6 +28,7 @@ interface WireNote {
 interface NoteSummary {
   id: string;
   title: string;
+  groupId: string | null;
   updatedAt: number;
   createdAt: number;
 }
@@ -76,6 +78,7 @@ function wireToNote(wire: WireNote): Note {
   return {
     id: wire.id,
     title: wire.title,
+    groupId: wire.groupId ?? null,
     content: { html: wire.content.html, images },
     updatedAt: wire.updatedAt,
     createdAt: wire.createdAt,
@@ -96,6 +99,7 @@ function summaryToNote(summary: NoteSummary): Note {
   return {
     id: summary.id,
     title: summary.title,
+    groupId: summary.groupId ?? null,
     content: { html: "", images: {} },
     updatedAt: summary.updatedAt,
     createdAt: summary.createdAt,
@@ -183,11 +187,14 @@ export async function getNote(id: string): Promise<Note | undefined> {
   }
 }
 
-export async function createNote(title = "Untitled note"): Promise<Note> {
+export async function createNote(
+  title = "Untitled note",
+  groupId: string | null = null
+): Promise<Note> {
   const res = await apiFetch("/api/notes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, groupId }),
   });
   const wire = (await res.json()) as WireNote;
   return wireToNote(wire);
@@ -248,6 +255,46 @@ export async function updateNoteTitle(id: string, title: string): Promise<void> 
   });
 }
 
+export async function updateNoteGroup(
+  id: string,
+  groupId: string | null
+): Promise<void> {
+  await apiFetch(`/api/notes/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ groupId }),
+  });
+}
+
 export async function deleteNote(id: string): Promise<void> {
   await apiFetch(`/api/notes/${id}`, { method: "DELETE" });
+}
+
+export async function listNoteGroups(): Promise<NoteGroup[]> {
+  const res = await apiFetch("/api/groups");
+  return (await res.json()) as NoteGroup[];
+}
+
+export async function createNoteGroup(name: string): Promise<NoteGroup> {
+  const res = await apiFetch("/api/groups", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return (await res.json()) as NoteGroup;
+}
+
+export async function renameNoteGroup(
+  id: string,
+  name: string
+): Promise<void> {
+  await apiFetch(`/api/groups/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteNoteGroup(id: string): Promise<void> {
+  await apiFetch(`/api/groups/${id}`, { method: "DELETE" });
 }

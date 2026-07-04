@@ -14,8 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Lecture Notes",
-  description:
-    "Create clean lecture notes by pasting screenshots that are automatically enhanced for readability.",
+  description: "Create and organize lecture notes.",
 };
 
 export default function RootLayout({

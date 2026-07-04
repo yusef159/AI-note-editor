@@ -14,13 +14,18 @@ import {
   deleteNote,
   loadNoteHtml,
   updateNoteTitle,
+  listNoteGroups,
+  createNoteGroup,
+  renameNoteGroup,
+  deleteNoteGroup,
+  updateNoteGroup,
 } from "@/lib/db";
 import {
   modeUsesEnhancement,
   modeUsesExtract,
   getPasteSettings,
 } from "@/lib/paste-settings";
-import type { Note } from "@/lib/types";
+import type { Note, NoteGroup } from "@/lib/types";
 import type { ApiStatus } from "@/components/PasteSettingsPanel";
 
 interface EditorPageProps {
@@ -30,6 +35,7 @@ interface EditorPageProps {
 export default function EditorPage({ noteId }: EditorPageProps) {
   const router = useRouter();
   const [notes, setNotes] = useState<Note[]>([]);
+  const [groups, setGroups] = useState<NoteGroup[]>([]);
   const [note, setNote] = useState<Note | null>(null);
   const [html, setHtml] = useState("");
   const [title, setTitle] = useState("");
@@ -54,14 +60,23 @@ export default function EditorPage({ noteId }: EditorPageProps) {
     setNotes(all);
   }, []);
 
+  const refreshGroups = useCallback(async () => {
+    const allGroups = await listNoteGroups();
+    setGroups(allGroups);
+  }, []);
+
   useEffect(() => {
     async function load() {
       setLoading(true);
       setLoadError(null);
 
       try {
-        const all = await listNotes();
+        const [all, allGroups] = await Promise.all([
+          listNotes(),
+          listNoteGroups(),
+        ]);
         setNotes(all);
+        setGroups(allGroups);
 
         const current = await getNote(noteId);
         if (!current) {
@@ -124,10 +139,46 @@ export default function EditorPage({ noteId }: EditorPageProps) {
     }, 400);
   };
 
-  const handleCreateNote = async () => {
-    const newNote = await createNote();
+  const handleCreateNote = async (groupId: string | null = null) => {
+    const newNote = await createNote("Untitled note", groupId);
     await refreshNotes();
     router.push(`/editor/${newNote.id}`);
+  };
+
+  const handleCreateGroup = async () => {
+    const group = await createNoteGroup("Untitled group");
+    await refreshGroups();
+    return group;
+  };
+
+  const handleRenameGroup = async (id: string, name: string) => {
+    await renameNoteGroup(id, name);
+    await refreshGroups();
+  };
+
+  const handleRenameNote = async (id: string, name: string) => {
+    await updateNoteTitle(id, name);
+    await refreshNotes();
+    if (id === noteId) {
+      setTitle(name);
+      setNote((current) => (current ? { ...current, title: name } : current));
+    }
+  };
+
+  const handleDeleteGroup = async (id: string) => {
+    await deleteNoteGroup(id);
+    await Promise.all([refreshGroups(), refreshNotes()]);
+    setNote((current) =>
+      current?.groupId === id ? { ...current, groupId: null } : current
+    );
+  };
+
+  const handleMoveNote = async (id: string, groupId: string | null) => {
+    await updateNoteGroup(id, groupId);
+    await refreshNotes();
+    setNote((current) =>
+      current?.id === id ? { ...current, groupId } : current
+    );
   };
 
   const handleDeleteNote = async (id: string) => {
@@ -205,8 +256,14 @@ export default function EditorPage({ noteId }: EditorPageProps) {
     <div className="flex h-screen overflow-hidden">
       <NotesSidebar
         notes={notes}
+        groups={groups}
+        onCreateGroup={handleCreateGroup}
+        onRenameGroup={handleRenameGroup}
+        onDeleteGroup={handleDeleteGroup}
         onCreateNote={handleCreateNote}
         onDeleteNote={handleDeleteNote}
+        onRenameNote={handleRenameNote}
+        onMoveNote={handleMoveNote}
       />
 
       <main className="flex-1 flex flex-col min-w-0">

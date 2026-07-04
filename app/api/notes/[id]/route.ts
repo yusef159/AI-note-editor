@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   deleteNote,
   getNote,
+  isValidNoteGroupId,
   isValidNoteId,
   updateNote,
   type ServerNote,
@@ -42,11 +43,24 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const body = await request.json();
     const updates: {
       title?: string;
+      groupId?: string | null;
       content?: ServerNote["content"];
     } = {};
 
     if (typeof body.title === "string") {
       updates.title = body.title;
+    }
+
+    if (body.groupId === null) {
+      updates.groupId = null;
+    } else if (typeof body.groupId === "string") {
+      if (!isValidNoteGroupId(body.groupId)) {
+        return NextResponse.json(
+          { error: "Invalid note group id" },
+          { status: 400 }
+        );
+      }
+      updates.groupId = body.groupId;
     }
 
     if (body.content && typeof body.content === "object") {
@@ -112,14 +126,35 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   try {
     const body = await request.json();
-    if (typeof body.title !== "string") {
+    const updates: {
+      title?: string;
+      groupId?: string | null;
+    } = {};
+
+    if (typeof body.title === "string") {
+      updates.title = body.title;
+    }
+
+    if (body.groupId === null) {
+      updates.groupId = null;
+    } else if (typeof body.groupId === "string") {
+      if (!isValidNoteGroupId(body.groupId)) {
+        return NextResponse.json(
+          { error: "Invalid note group id" },
+          { status: 400 }
+        );
+      }
+      updates.groupId = body.groupId;
+    }
+
+    if (updates.title === undefined && updates.groupId === undefined) {
       return NextResponse.json(
-        { error: "title must be a string" },
+        { error: "title or groupId is required" },
         { status: 400 }
       );
     }
 
-    const note = await updateNote(id, { title: body.title });
+    const note = await updateNote(id, updates);
     if (!note) {
       return NextResponse.json({ error: "Note not found" }, { status: 404 });
     }
