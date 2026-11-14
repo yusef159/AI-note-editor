@@ -13,6 +13,12 @@ import {
 } from "react";
 import type { Note, NoteGroup } from "@/lib/types";
 import {
+  getCollapsedGroupIds,
+  getServerCollapsedGroupIds,
+  subscribeToCollapsedGroupIds,
+  toggleCollapsedGroupId,
+} from "@/lib/collapsed-groups-preference";
+import {
   getSidebarCollapsed,
   setSidebarCollapsed,
 } from "@/lib/sidebar-preference";
@@ -116,8 +122,10 @@ export default function NotesSidebar({
   } | null>(null);
   const [openMenuNoteId, setOpenMenuNoteId] = useState<string | null>(null);
   const [openGroupMenuId, setOpenGroupMenuId] = useState<string | null>(null);
-  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(
-    () => new Set()
+  const collapsedGroupIds = useSyncExternalStore(
+    subscribeToCollapsedGroupIds,
+    getCollapsedGroupIds,
+    getServerCollapsedGroupIds
   );
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   const noteMenuRef = useRef<HTMLDivElement | null>(null);
@@ -210,15 +218,7 @@ export default function NotesSidebar({
   };
 
   const toggleGroupCollapsed = (id: string) => {
-    setCollapsedGroupIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
+    toggleCollapsedGroupId(id);
   };
 
   const handleGroupKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
