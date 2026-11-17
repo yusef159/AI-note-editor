@@ -22,6 +22,7 @@ interface ExportMenuProps {
 const PDF_MARGIN = 40;
 const BLOCK_GAP = 20;
 const CANVAS_SCALE = 2;
+const IMAGE_TIMEOUT_MS = 10_000;
 
 const EXPORT_CSS = `
   * { box-sizing: border-box; }
@@ -87,11 +88,18 @@ function findLoadedEditorImage(imageId: string): HTMLImageElement | null {
 
 function waitForSingleImage(img: HTMLImageElement): Promise<void> {
   return new Promise((resolve) => {
-    if (img.complete && img.naturalWidth > 0) {
+    // A failed image is complete too; its error event may have already fired.
+    if (img.complete) {
       resolve();
       return;
     }
-    const done = () => resolve();
+    const done = () => {
+      clearTimeout(timeout);
+      img.removeEventListener("load", done);
+      img.removeEventListener("error", done);
+      resolve();
+    };
+    const timeout = setTimeout(done, IMAGE_TIMEOUT_MS);
     img.addEventListener("load", done, { once: true });
     img.addEventListener("error", done, { once: true });
   });
@@ -108,6 +116,12 @@ async function dataUrlFromBlob(
   blob: Blob
 ): Promise<{ dataUrl: string; width: number; height: number } | null> {
   const dataUrl = await blobToDataUrl(blob);
+  return imageDataFromUrl(dataUrl);
+}
+
+async function imageDataFromUrl(
+  dataUrl: string
+): Promise<{ dataUrl: string; width: number; height: number } | null> {
   const probe = new Image();
   probe.src = dataUrl;
   await waitForSingleImage(probe);
@@ -123,6 +137,12 @@ async function imageElementToDataUrl(
   img: HTMLImageElement,
   imageId: string | null
 ): Promise<string | null> {
+  // DOMParser documents are inert: their images may never dispatch load/error.
+  if (!img.isConnected && !img.naturalWidth) {
+    const probe = new Image();
+    probe.src = img.src;
+    img = probe;
+  }
   await waitForSingleImage(img);
   if (!img.naturalWidth || !img.naturalHeight) return null;
 
@@ -135,7 +155,9 @@ async function imageElementToDataUrl(
 
   if (img.src.startsWith("blob:")) {
     try {
-      return blobToDataUrl(await (await fetch(img.src)).blob());
+      return blobToDataUrl(await (await fetch(img.src, {
+        signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+      })).blob());
     } catch {
       return null;
     }
@@ -158,6 +180,19 @@ async function resolveImageData(
   img: HTMLImageElement
 ): Promise<{ dataUrl: string; width: number; height: number } | null> {
   const imageId = getImageId(img);
+
+  // Prepared exports already contain data URLs. Avoid re-reading the registry
+  // and base64-encoding the same screenshot during PDF placement.
+  if (img.getAttribute("src")?.startsWith("data:")) {
+    if (img.naturalWidth && img.naturalHeight) {
+      return {
+        dataUrl: img.src,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+      };
+    }
+    return imageDataFromUrl(img.src);
+  }
 
   const registered = await blobFromRegisteredImage(imageId);
   if (registered) {
@@ -198,7 +233,8 @@ async function resolveImageData(
 
   if (src && !src.startsWith("data:")) {
     try {
-      const res = await fetch(src);
+      const res = await fetch(src, { signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
+      if (!res.ok) return null;
       const resolved = await dataUrlFromBlob(await res.blob());
       if (resolved) return resolved;
     } catch {
@@ -239,18 +275,20 @@ function parseContentBlocks(html: string): HTMLElement[] {
 
 function waitForImages(root: ParentNode): Promise<void> {
   const imgs = root.querySelectorAll("img");
-  return Promise.all(
-    Array.from(imgs).map(
-      (img) =>
-        new Promise<void>((resolve) => {
-          if (img.complete) resolve();
-          else {
-            img.onload = () => resolve();
-            img.onerror = () => resolve();
-          }
-        })
-    )
-  ).then(() => undefined);
+  return Promise.all(Array.from(imgs).map(waitForSingleImage)).then(() => undefined);
+}
+
+function captureOptions(content: HTMLDivElement) {
+  const stage = content.parentElement;
+  return {
+    ...HTML2CANVAS_OPTS,
+    height: content.scrollHeight + 16,
+    windowHeight: content.scrollHeight + 16,
+    // Keep the document head (fonts/styles), but skip the editor, sidebar,
+    // and their images when html2canvas clones the document for each block.
+    ignoreElements: (element: Element) =>
+      element.parentElement === document.body && element !== stage,
+  };
 }
 
 function createStageContainer(contentWidth: number): HTMLDivElement {
@@ -301,7 +339,7 @@ function ensureSpace(
   pageHeight: number,
   margin: number
 ): number {
-  if (y + needed > pageHeight - margin) {
+  if (y > margin && y + needed > pageHeight - margin) {
     pdf.addPage();
     return margin;
   }
@@ -324,11 +362,8 @@ async function renderTitle(
   document.body.appendChild(stage);
 
   try {
-    const canvas = await html2canvas(content, {
-      ...HTML2CANVAS_OPTS,
-      height: content.scrollHeight + 16,
-      windowHeight: content.scrollHeight + 16,
-    });
+    await document.fonts.ready;
+    const canvas = await html2canvas(content, captureOptions(content));
     const blockHeight = canvas.height / CANVAS_SCALE;
     y = ensureSpace(pdf, y, blockHeight, pageHeight, margin);
     pdf.addImage(
@@ -419,15 +454,12 @@ async function placeHtmlBlock(
   contentHeight: number,
   pageHeight: number,
   margin: number,
-  options: { allowSlice?: boolean; blockGap?: number } = {}
+  options: { allowSlice?: boolean; blockGap?: number; canvas?: HTMLCanvasElement } = {}
 ): Promise<number> {
   const { allowSlice = true, blockGap = BLOCK_GAP } = options;
   const content = stage.querySelector(".export-content") as HTMLDivElement;
-  const canvas = await html2canvas(content, {
-    ...HTML2CANVAS_OPTS,
-    height: content.scrollHeight + 16,
-    windowHeight: content.scrollHeight + 16,
-  });
+  const canvas = options.canvas ??
+    await html2canvas(content, captureOptions(content));
 
   const blockHeight = canvas.height / CANVAS_SCALE;
   if (blockHeight <= 0) return y;
@@ -481,6 +513,66 @@ async function placeHtmlBlock(
   }
 
   return y + blockGap;
+}
+
+async function captureTextBatch(
+  stage: HTMLDivElement,
+  blocks: HTMLElement[],
+  start: number,
+  contentHeight: number
+): Promise<HTMLCanvasElement[]> {
+  const content = stage.querySelector(".export-content") as HTMLDivElement;
+  const heights: number[] = [];
+  let totalHeight = 0;
+  content.replaceChildren();
+  content.style.padding = "0";
+  try {
+    for (let index = start; index < blocks.length; index++) {
+      const block = blocks[index];
+      // Images and question groups keep their specialized placement paths.
+      if (
+        isQuestionGroupElement(block) ||
+        block.querySelector("img") ||
+        block.tagName === "IMG"
+      ) break;
+      const wrapper = document.createElement("div");
+      const inner = document.createElement("div");
+      inner.className = "export-content";
+      inner.appendChild(document.importNode(block, true));
+      wrapper.appendChild(inner);
+      content.appendChild(wrapper);
+      const height = inner.scrollHeight + 16;
+      // Bound memory, even for long notes. Oversized blocks use the slicing path.
+      if (height > contentHeight || totalHeight + height > contentHeight * 2) {
+        wrapper.remove();
+        break;
+      }
+      wrapper.style.height = `${height}px`;
+      heights.push(height);
+      totalHeight += height;
+    }
+    if (heights.length < 2) return [];
+    const canvas = await html2canvas(content, {
+      ...captureOptions(content),
+      height: totalHeight,
+      windowHeight: totalHeight,
+    });
+    let offset = 0;
+    return heights.map((height) => {
+      const slice = document.createElement("canvas");
+      slice.width = canvas.width;
+      slice.height = height * CANVAS_SCALE;
+      slice.getContext("2d")!.drawImage(
+        canvas, 0, offset, canvas.width, slice.height,
+        0, 0, slice.width, slice.height
+      );
+      offset += slice.height;
+      return slice;
+    });
+  } finally {
+    content.style.removeProperty("padding");
+    content.replaceChildren();
+  }
 }
 
 async function prepareExportHtml(html: string): Promise<string> {
@@ -579,9 +671,28 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
       document.body.appendChild(stage);
 
       try {
-        for (const block of blocks) {
+        for (let index = 0; index < blocks.length; index++) {
+          const block = blocks[index];
           content.innerHTML = "";
           const blockEl = document.importNode(block, true) as HTMLElement;
+
+          if (
+            !isQuestionGroupElement(blockEl) &&
+            blockEl.tagName !== "IMG" &&
+            !blockEl.querySelector("img")
+          ) {
+            const batch = await captureTextBatch(stage, blocks, index, contentHeight);
+            if (batch.length > 0) {
+              for (const canvas of batch) {
+                y = await placeHtmlBlock(
+                  pdf, stage, y, contentWidth, contentHeight,
+                  pageHeight, PDF_MARGIN, { canvas }
+                );
+              }
+              index += batch.length - 1;
+              continue;
+            }
+          }
 
           if (isQuestionGroupElement(blockEl)) {
             y = await placeQuestionGroupPdf(
@@ -594,7 +705,6 @@ export default function ExportMenu({ title, html }: ExportMenuProps) {
               pageHeight,
               PDF_MARGIN,
               {
-                html2canvasOpts: HTML2CANVAS_OPTS,
                 ensureSpace,
                 placeHtmlBlock,
                 resolveImageData,

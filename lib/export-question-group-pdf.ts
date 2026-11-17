@@ -1,5 +1,4 @@
 import type { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
 
 import {
   DEFAULT_QUESTION_GROUP_COLOR,
@@ -81,14 +80,6 @@ export function isQuestionGroupElement(el: HTMLElement): boolean {
   return el.hasAttribute("data-question-group");
 }
 
-type Html2CanvasOpts = {
-  scale: number;
-  useCORS: boolean;
-  allowTaint: boolean;
-  logging: boolean;
-  backgroundColor: string;
-};
-
 type ResolveImageData = (
   img: HTMLImageElement
 ) => Promise<{ dataUrl: string; width: number; height: number } | null>;
@@ -136,23 +127,15 @@ function appendContinuedLabel(
   container.appendChild(label);
 }
 
-async function measureStageContent(
-  stage: HTMLDivElement,
-  html2canvasOpts: Html2CanvasOpts
-): Promise<number> {
+function measureStageContent(stage: HTMLDivElement): number {
   const content = stage.querySelector(".export-content") as HTMLDivElement;
-  const canvas = await html2canvas(content, {
-    ...html2canvasOpts,
-    height: content.scrollHeight + 16,
-    windowHeight: content.scrollHeight + 16,
-  });
-  return canvas.height / html2canvasOpts.scale;
+  // Match the capture height without cloning the document and painting a canvas.
+  return content.scrollHeight + 16;
 }
 
 async function measureNodesHeight(
   stage: HTMLDivElement,
   nodes: HTMLElement[],
-  html2canvasOpts: Html2CanvasOpts,
   waitForImages: (root: ParentNode) => Promise<void>,
   maxImageHeight?: number
 ): Promise<number> {
@@ -178,13 +161,12 @@ async function measureNodesHeight(
   probe.appendChild(body);
   content.appendChild(probe);
   await waitForImages(content);
-  return measureStageContent(stage, html2canvasOpts);
+  return measureStageContent(stage);
 }
 
 async function measureHeaderHeight(
   stage: HTMLDivElement,
   buildHeader: (container: HTMLElement) => void,
-  html2canvasOpts: Html2CanvasOpts,
   waitForImages: (root: ParentNode) => Promise<void>
 ): Promise<number> {
   const content = stage.querySelector(".export-content") as HTMLDivElement;
@@ -193,7 +175,7 @@ async function measureHeaderHeight(
   buildHeader(probe);
   content.appendChild(probe);
   await waitForImages(content);
-  return measureStageContent(stage, html2canvasOpts);
+  return measureStageContent(stage);
 }
 
 function getWrapperClass(
@@ -253,7 +235,6 @@ export async function placeQuestionGroupPdf(
   pageHeight: number,
   margin: number,
   deps: {
-    html2canvasOpts: Html2CanvasOpts;
     ensureSpace: EnsureSpace;
     placeHtmlBlock: PlaceHtmlBlock;
     resolveImageData: ResolveImageData;
@@ -280,7 +261,7 @@ export async function placeQuestionGroupPdf(
     y = deps.ensureSpace(
       pdf,
       y,
-      await measureStageContent(stage, deps.html2canvasOpts),
+      measureStageContent(stage),
       pageHeight,
       margin
     );
@@ -314,19 +295,16 @@ export async function placeQuestionGroupPdf(
       isFirstSegment
         ? (container) => appendTitleHeader(container, title, colorId)
         : (container) => appendContinuedLabel(container, title, colorId),
-      deps.html2canvasOpts,
       deps.waitForImages
     );
 
     const segmentNodes: HTMLElement[] = [];
-    let bodyHeight = 0;
 
     while (nodeIndex < nodes.length) {
       const candidate = [...segmentNodes, nodes[nodeIndex]];
       const candidateHeight = await measureNodesHeight(
         stage,
         candidate,
-        deps.html2canvasOpts,
         deps.waitForImages,
         contentHeight - headerHeight - 24
       );
@@ -342,16 +320,12 @@ export async function placeQuestionGroupPdf(
         segmentNodes.length === 0 &&
         headerHeight + candidateHeight > spaceOnPage
       ) {
-        if (!isFirstSegment) {
-          pdf.addPage();
-          y = margin;
-          spaceOnPage = contentHeight;
+        if (y > margin) {
           break;
         }
       }
 
       segmentNodes.push(nodes[nodeIndex]);
-      bodyHeight = candidateHeight;
       nodeIndex++;
     }
 
@@ -376,7 +350,7 @@ export async function placeQuestionGroupPdf(
     content.appendChild(wrapper);
     await deps.waitForImages(content);
 
-    const blockHeight = await measureStageContent(stage, deps.html2canvasOpts);
+    const blockHeight = measureStageContent(stage);
     y = deps.ensureSpace(pdf, y, blockHeight, pageHeight, margin);
     y = await deps.placeHtmlBlock(
       pdf,
